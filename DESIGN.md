@@ -177,8 +177,13 @@ truncation never binds there. The exposed corner is non-NEO orbits with
 $q \in (1.3, \sim1.5)$ AU (Mars-crosser zone) observed near perihelion/opposition at
 $V \gtrsim 23.5$, where implied $H$ can exceed the non-NEO support and P(NEO) inflates by
 model boundary rather than physics. In v0 both components share the digest2 support
-($H \le 25.5$), making the truncation symmetric. Validation must flag tracklets with
-posterior mass in $\{q > 1.3,\, H > H_{\max}^{\rm model}\}$ (§4).
+($H \le 25.5$) — but the WP4 review established that a shared boundary is **not**
+symmetric truncation in effect: 55.8% of the NEO component's total mass sits in the
+single top H bin $[24, 25.5)$ versus 1.4% of the other component's, so the faint-end
+mixture ratio is ~40× more sensitive per unit mass to the H boundary on the NEO side.
+Validation must therefore flag, per tracklet, (a) posterior mass in
+$\{q > 1.3,\, H > H_{\max}^{\rm model}\}$ and (b) the admissible-region measure with
+implied $H > 25.5$ (nodes both components zero out purely by boundary) (§4).
 
 ### 2.7 Measurement uncertainty (deferred, designed-for)
 
@@ -255,12 +260,27 @@ Selection applied on the observables — a $V < 24$ cut, a toy footprint — doe
 $(A, V)$-conditional calibration, so these sets can be made survey-like without a survey
 simulator.
 
+**Unbound-draw filtering.** The digest2 model's top eccentricity bin straddles $e = 1$,
+so `sample()` yields formally unbound objects — measured at 1.93% of All/NEO draws
+(2.24% Unk/NEO) versus ~2×10⁻⁶ of "other" (WP4 review). The generator must discard
+unbound draws and report the discarded fraction per component. Calibration is preserved:
+the classifier's admissible region restricts the likelihood integral to bound orbits
+identically, so both the generating distribution and the effective prior are the
+bound-restricted model.
+
 ### 4.2 Method comparison on shared inputs (v0)
 
 digest2 vs. digest42 on the same self-generated sets: both codes use the same population
 file, and the test population matches that shared prior, so the ranking (ROC) gap isolates
 the value of the Jacobian + marginalization + calibrated posterior. This is the clean
 experiment for the methods paper.
+
+One caveat to the "same inputs" premise (WP4 review): digest2's lookup clamps $H \ge 24$
+into a $[24, \infty)$ top bin, while digest42 truncates at 25.5 per D-4 — so for ranging
+nodes with implied $H > 25.5$ the two codes consume *different* effective models. The
+comparison must report the fraction of tracklets with non-negligible admissible-region
+measure at $H > 25.5$ (the §2.6 diagnostic) and either exclude them or discuss them
+separately.
 
 ### 4.3 Prior-misspecification stress test (v1+)
 
