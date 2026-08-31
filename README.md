@@ -25,5 +25,6 @@ the two codes differ in method alone.
 | Document | Contents |
 |---|---|
 | [DESIGN.md](DESIGN.md) | Goals and scope, full mathematical formalism, architecture, validation plan, roadmap |
+| [IMPLEMENTATION.md](IMPLEMENTATION.md) | v0 execution plan: work packages, agent team schedule, review protocol, acceptance gates |
 | [DECISIONS.md](DECISIONS.md) | Dated log of design decisions with rationale and alternatives |
 | [POPULATION_MODELS.md](POPULATION_MODELS.md) | Survey of available solar-system population models (through 2026-08) and open actions |
