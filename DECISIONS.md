@@ -136,7 +136,9 @@ calibration seam: digest2's content is unrescaled 2011 S3M while NEOMOD3 is inde
 calibrated; with no prior knob (D-3), mixing them in v0 would bake a known ~25%
 inconsistency into first results. Within pure digest2, calibration and q = 1.3
 complementarity (D-2) hold by construction. (c) Defers the S3M density-estimation problem,
-which is orthogonal to getting the method working.
+which is orthogonal to getting the method working. (d) The histogram is directly
+sampleable, making the self-consistency test sets of DESIGN §4.1 cheap to generate — the
+same file serves as prior and as test-population generator.
 
 **Alternatives.** (a) NEOMOD3 + digest2-rest hybrid in v0 — rejected for the seam above;
 (b) density-estimating S3M directly in v0 — rejected as the rabbit hole this decision

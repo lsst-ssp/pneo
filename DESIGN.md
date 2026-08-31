@@ -225,29 +225,63 @@ consistency across components, complementarity at $q = 1.3$ AU, and support boun
 
 ## 4. Validation plan
 
-1. **Head-to-head vs digest2 on identical inputs.** Same population file, same tracklets;
-   compare ranking (ROC) and calibration. This isolates the value of the Jacobian +
-   marginalization. Test sets: simulated Rubin tracklets (Sorcha with the Kurlander et al.
-   2025 input populations and/or DP0.3), plus real NEOCP-style labeled candidates.
-2. **Calibration curves.** Among tracklets scored $P(\mathrm{NEO}) \approx p$, the true NEO
-   fraction must be $\approx p$ (reliability diagram). This is the claim digest2 cannot
-   make and the headline plot.
-3. **Completeness–contamination at triage thresholds** as the operational metric for
-   follow-up targeting.
-4. **Truncation-corner flag** (§2.6): report the fraction of tracklets with significant
-   posterior mass at $\{q > 1.3,\, H > H_{\max}^{\rm model}\}$; expected rare (faintest
-   ~1.5 mag of the tracklet population), verify empirically.
-5. **Collapse tests.** For objects with known orbits, the $(\rho, \dot\rho)$ posterior maps
-   must concentrate around the true (ρ, ρ̇); the diagnostic maps are a first-class output.
+A hierarchy: correctness first, on test sets whose generating distribution matches the
+prior exactly; robustness later, on realistic sets that deliberately do not. The two must
+not be conflated — on a test population that differs from the prior, even a perfect
+implementation shows miscalibration, and method error becomes indistinguishable from prior
+mismatch.
+
+### 4.1 Self-consistency (v0 gate, self-generated test sets)
+
+A Bayesian classifier is *exactly* calibrated when the test population is drawn from the
+same distribution as its prior. We therefore generate our own test sets by sampling
+$(E, H)$ from the digest2 histogram itself (directly sampleable: binned density, uniform
+angles), placing objects at random epochs and observer geometries, and computing the
+implied $(A, V)$. On these sets:
+
+- **Reliability diagrams must be diagonal.** Among tracklets scored
+  $P(\mathrm{NEO}) \approx p$, the true NEO fraction must be $\approx p$; any deviation is
+  a bug — in the Jacobian, the measure, the admissible-region bounds, or the integration —
+  because prior mismatch is zero by construction.
+- **Collapse tests.** The $(\rho, \dot\rho)$ posterior maps must cover and concentrate
+  around each object's true $(\rho, \dot\rho)$; the diagnostic maps are a first-class
+  output.
+- **Targeted slices**, also self-generated: controlled rate scans at opposition (the
+  NEO/MBA separation should match intuition), admissible-region edges, and the truncation
+  corner of §2.6 (report posterior mass at $\{q > 1.3,\, H > H_{\max}^{\rm model}\}$;
+  expected rare — the faintest ~1.5 mag of the tracklet population — verify empirically).
+
+Selection applied on the observables — a $V < 24$ cut, a toy footprint — does not break
+$(A, V)$-conditional calibration, so these sets can be made survey-like without a survey
+simulator.
+
+### 4.2 Method comparison on shared inputs (v0)
+
+digest2 vs. digest42 on the same self-generated sets: both codes use the same population
+file, and the test population matches that shared prior, so the ranking (ROC) gap isolates
+the value of the Jacobian + marginalization + calibrated posterior. This is the clean
+experiment for the methods paper.
+
+### 4.3 Prior-misspecification stress test (v1+)
+
+In production the true population matches nobody's prior. Scoring tracklets generated from
+*different, more modern* populations — Sorcha with the Kurlander et al. (2025) inputs
+and/or DP0.3, plus real NEOCP-style labeled candidates — deliberately measures how
+calibration and ranking degrade under realistic prior mismatch, and provides the
+operational metrics (completeness–contamination at triage thresholds, score distributions)
+on realistic Rubin observables including cadence, trailing losses, and rate errors.
+Explicitly a robustness test, not a correctness test: miscalibration here reflects prior
+mismatch as much as method quality.
 
 ## 5. Roadmap
 
 - **v0 — method bootstrap.** Ranging engine + Jacobian + `Digest2Histogram` for both
   components; delta-function attributable; HG $G=0.15$; All/Unk flag; $(\rho, \dot\rho)$
-  posterior diagnostics; validation items 1, 2, 5.
+  posterior diagnostics; validation §4.1–4.2.
 - **v1 — modern components.** `NEOMod3Grid` NEO side + 0.8×S3M-derived other side, with
   deliberate cross-normalization; attributable-covariance marginalization; empirical
-  MPCORB-above-completeness belt density as an alternative module.
+  MPCORB-above-completeness belt density as an alternative module; stress-test validation
+  §4.3.
 - **v2 — full mixture & scale.** Parametric Trojans/Hildas/TNO components (with angular
   structure where it matters); SMB belt model when released; Centaur re-fit against the
   PS1 selection function; comet-scope decision; vectorization/throughput work for
