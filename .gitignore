@@ -7,3 +7,4 @@ dist/
 data/*
 !data/README.md
 validation/output/
+.ipynb_checkpoints/

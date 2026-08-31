@@ -25,16 +25,25 @@ from .constants import G_SLOPE_DEFAULT
 
 def unit_vector(ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
     """Topocentric line-of-sight unit vector u_hat(ra, dec), equ frame. -> (..., 3)"""
-    raise NotImplementedError("WP2")
+    ra, dec = np.asarray(ra), np.asarray(dec)
+    cd = np.cos(dec)
+    return np.stack([cd * np.cos(ra), cd * np.sin(ra), np.sin(dec)], axis=-1)
 
 
 def tangent_basis(ra: np.ndarray, dec: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(u_hat, du/dra, du/ddec), each (..., 3), equ frame.
 
     du/dra is the RAW partial (no cos(dec) factor), consistent with
-    Attributable.ra_rate being d(ra)/dt.
+    Attributable.ra_rate being d(ra)/dt. Implemented in WP0 and shared by
+    WP2/WP3; do not reimplement.
     """
-    raise NotImplementedError("WP2")
+    ra, dec = np.asarray(ra), np.asarray(dec)
+    sa, ca = np.sin(ra), np.cos(ra)
+    sd, cd = np.sin(dec), np.cos(dec)
+    u = np.stack([cd * ca, cd * sa, sd], axis=-1)
+    du_dra = np.stack([-cd * sa, cd * ca, np.zeros_like(sd)], axis=-1)
+    du_ddec = np.stack([-sd * ca, -sd * sa, cd], axis=-1)
+    return u, du_dra, du_ddec
 
 
 def topocentric_to_heliocentric(
