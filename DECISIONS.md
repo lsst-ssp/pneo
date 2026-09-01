@@ -154,3 +154,35 @@ state-vector chain rule.
 **Rationale.** This is the core methodological difference from digest2: it converts
 orbit-space density into observation-space density correctly (volume growth with distance
 included), making the posterior a proper probability rather than a heuristic score.
+
+## D-12: Bootstrap-calibrated gate statistics (2026-09-01)
+
+**Decision.** The §4.1 gate's reliability criterion uses 5 equal-*expected-NEO-count*
+bins with parametric-bootstrap thresholds (B = 2000; labels re-simulated from the
+observed p vector), a gated global count statistic Z_tot (exact Poisson-binomial tail
+in mixture mode), and a fitted global odds-scale ĉ with CI — replacing the original
+"reliability diagram within binomial error bars" wording. Enriched-mode variance is
+w_NEO·w_other·Σp(1−p). The gate ran at N = 2×10⁴ (power 0.88 vs p^1.3 at exact 1%
+Type-I) plus an N = 10⁵ calibration run (ĉ to ±15%).
+
+**Rationale.** The WP6 adversarial review measured the naive criterion at a 43%
+false-FAIL rate and ~zero power at mixture base rates (~65 NEOs per 10⁴ tracklets put
+9 of 10 equal-count bins below one expected NEO). Bootstrap thresholds make the Type-I
+error exact by construction regardless of binning or base rate; the review's power
+analysis drove both the binning and the doubled N.
+
+**Alternatives.** 10 equal-count bins + |z| < 2 (the original: mis-sized both ways);
+min-p multiplicity correction across arms (measured: over-conservative, cost a third
+of the power — the plain union of two 1% arms achieves 0.98% family-wise).
+
+## D-13: NEO enrichment is a low-p diagnostic, not a calibration booster
+
+**Decision.** The harness's --neo-fraction mode defaults to f = 0.1, is marked
+non-gate-eligible, and is documented as amplifying sensitivity only at p ≲ 0.02.
+
+**Rationale.** More NEOs ≠ more calibration information: enrichment pushes mid-p
+tracklets to near-deterministic labels, destroying their calibration content (measured
+by both the reviewer and implementer; they disagreed on the size at mid-p — 3.4× worse
+vs neutral — but agreed on the conclusion, and both measurements are recorded in the
+module docstring). Gate-mode sampling is the calibration test; enrichment probes the
+low-p tail.

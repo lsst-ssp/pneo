@@ -18,10 +18,12 @@ absolutely calibrated, there is no tunable prior. This replaces digest2's heuris
 with a calibrated probability, using — in v0 — digest2's own population model as input, so
 the two codes differ in method alone.
 
-**Status (2026-09):** v0 implemented and validated — the DESIGN §4.1 self-consistency
-gate **passes** (N = 2×10⁴: reliability, HPD uniformity, collapse coverage all within
-criteria; see [validation/GATE_RESULTS.md](validation/GATE_RESULTS.md)). Remaining for
-v0: the digest2 head-to-head comparison (WP7) and docs polish.
+**Status (2026-09): v0 complete.** The DESIGN §4.1 self-consistency gate **passes** at
+N = 2×10⁴ and at N = 10⁵ (global odds scale ĉ = 1.03 [0.88, 1.20]; see
+[validation/GATE_RESULTS.md](validation/GATE_RESULTS.md)), and the digest2 head-to-head
+on identical inputs shows better ranking (ΔAUC +0.007 [+0.001, +0.015] on the clean
+subset) and an order-of-magnitude calibration advantage — at matched 88% completeness,
+59.1% → 6.3% contamination ([validation/DIGEST2_COMPARISON.md](validation/DIGEST2_COMPARISON.md)).
 
 ```python
 from astropy.time import Time
