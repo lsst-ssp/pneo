@@ -43,8 +43,41 @@ MODEL_PATH = os.path.join(REPO_ROOT, "data", "digest2.model.csv")
 
 ANGLE_VOLUME = (2.0 * math.pi) ** 3
 
+# ---------------------------------------------------------------------------
+# The four partition arrays, transcribed by hand from d2model.c (upstream
+# digest2, github.com/Smithsonian/mpc-public):
+#
+#   double qpart[QX] = { .4, .7, .8, .9, 1., 1.1, 1.2, 1.3, 1.4, 1.5,
+#     1.67, 1.8, 2., 2.2, 2.4, 2.6, 2.8, 3., 3.2, 3.5,
+#     4., 4.5, 5., 5.5, 10., 20., 30., 40., 100. };
+#   double epart[EX] = { .1, .2, .3, .4, .5, .7, .9, 1.1 };
+#   double ipart[IX] = { 2, 5, 10, 15, 20, 25, 30, 40, 60, 90, 180 };
+#   double hpart[HX] = { 6, 8, 10, 11, 12, 13, 14, 15, 16, 17,
+#     18, 19, 20, 21, 22, 23, 24, 25.5 };
+#
+# The independent re-derivations below use THESE, never the module's own
+# constants, so that a corrupted partition array in population.py cannot
+# make the naive cross-check agree with the implementation by construction.
+# ---------------------------------------------------------------------------
+REF_QPART = np.array(
+    [0.4, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+     1.67, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.5,
+     4.0, 4.5, 5.0, 5.5, 10.0, 20.0, 30.0, 40.0, 100.0]
+)
+REF_EPART = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9, 1.1])
+REF_IPART_DEG = np.array(
+    [2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 60.0, 90.0, 180.0]
+)
+REF_HPART = np.array(
+    [6.0, 8.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0,
+     18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.5]
+)
+REF_SHAPE = (len(REF_QPART), len(REF_EPART), len(REF_IPART_DEG), len(REF_HPART))
+
 # Reference totals, independently established from the file by un-doing
-# muk.c's 1/sqrt(pseudo-volume) scaling.  All/SS = the S3M object count.
+# muk.c's 1/sqrt(pseudo-volume) scaling.  All/SS is the model file's own
+# total, NOT S3M's raw object count: s3mbin.c drops out-of-model orbits and
+# muk.c raises cells where the known catalogue exceeds the model.
 REFERENCE_TOTALS = {
     ("All", "SS"): 14542147.0,
     ("All", "NEO"): 277469.0,
@@ -99,29 +132,32 @@ def samples(pair_all):
 
 
 def naive_muk_pseudo_volume():
-    """Line-by-line transcription of muk.c's scaling loop (no numpy tricks)."""
-    V = np.zeros(MODEL_SHAPE)
+    """Line-by-line transcription of muk.c's scaling loop (no numpy tricks).
+
+    Uses the hand-transcribed REF_* partitions, not the module's.
+    """
+    V = np.zeros(REF_SHAPE)
     q0 = 0.0
-    for iq in range(len(QPART)):
-        q1 = QPART[iq]
+    for iq in range(len(REF_QPART)):
+        q1 = REF_QPART[iq]
         dq = q1 - q0
         q0 = q1
         e0 = 0.0
         d1 = 1.0
-        for ie in range(len(EPART)):
-            e1 = EPART[ie]
+        for ie in range(len(REF_EPART)):
+            e1 = REF_EPART[ie]
             d0 = d1
             d1 = 1.0 - e1 if e1 < 1.0 else 0.0
             dae = dq * (e1 - e0) / (d0 + d1)
             e0 = e1
             i0 = 0.0
-            for ii in range(len(IPART_DEG)):
-                i1 = IPART_DEG[ii]
+            for ii in range(len(REF_IPART_DEG)):
+                i1 = REF_IPART_DEG[ii]
                 daei = dae * (i1 - i0)
                 i0 = i1
                 h0 = 0.0
-                for ih in range(len(HPART)):
-                    h1 = HPART[ih]
+                for ih in range(len(REF_HPART)):
+                    h1 = REF_HPART[ih]
                     V[iq, ie, ii, ih] = daei * (h1 - h0)
                     h0 = h1
     return V
@@ -215,6 +251,35 @@ def test_bad_variant_rejected():
 # ---------------------------------------------------------------------------
 
 
+def test_module_partitions_match_d2model_c():
+    """The module's constants must equal the hand-transcribed d2model.c ones.
+
+    Without this the independent re-derivations below would silently inherit
+    any corruption of population.py's partition arrays.
+    """
+    np.testing.assert_array_equal(QPART, REF_QPART)
+    np.testing.assert_array_equal(EPART, REF_EPART)
+    np.testing.assert_array_equal(IPART_DEG, REF_IPART_DEG)
+    np.testing.assert_array_equal(HPART, REF_HPART)
+    assert MODEL_SHAPE == REF_SHAPE == (29, 8, 11, 18)
+
+    # ... and the derived edge arrays: leading 0, degrees -> radians.
+    from digest42.population import (
+        E_EDGES, H_EDGES, I_EDGES, I_EDGES_DEG, Q_EDGES,
+    )
+
+    for edges, part in ((Q_EDGES, REF_QPART), (E_EDGES, REF_EPART),
+                        (I_EDGES_DEG, REF_IPART_DEG), (H_EDGES, REF_HPART)):
+        assert edges[0] == 0.0
+        np.testing.assert_array_equal(edges[1:], part)
+    np.testing.assert_allclose(I_EDGES, np.radians(I_EDGES_DEG), rtol=0, atol=0)
+
+    # BIN_VOLUME is dq * de * di[rad] * dH -- spot-check the first bin by hand
+    assert BIN_VOLUME[0, 0, 0, 0] == pytest.approx(
+        0.4 * 0.1 * math.radians(2.0) * 6.0, rel=1e-15
+    )
+
+
 def test_pseudo_volume_matches_naive_transcription():
     from digest42.population import _MUK_PSEUDO_VOLUME
 
@@ -224,12 +289,17 @@ def test_pseudo_volume_matches_naive_transcription():
 
 
 def test_counts_match_independent_csv_reader(tables):
-    """Independent reader: raw cell * sqrt(pseudo-volume), row by row."""
+    """Independent reader: raw cell * sqrt(pseudo-volume), CELL BY CELL.
+
+    Not just per-table totals: a sign-flipped or transposed cell would cancel
+    in a sum.  Every one of the 32 x 45 936 cells is compared.
+    """
     V = naive_muk_pseudo_volume()
-    qidx = {round(float(v), 9): k for k, v in enumerate(QPART)}
-    eidx = {round(float(v), 9): k for k, v in enumerate(EPART)}
-    iidx = {round(float(v), 9): k for k, v in enumerate(IPART_DEG)}
-    totals: dict[tuple[str, str], float] = {}
+    qidx = {round(float(v), 9): k for k, v in enumerate(REF_QPART)}
+    eidx = {round(float(v), 9): k for k, v in enumerate(REF_EPART)}
+    iidx = {round(float(v), 9): k for k, v in enumerate(REF_IPART_DEG)}
+    ref: dict[tuple[str, str], np.ndarray] = {}
+    nrows = 0
     with open(MODEL_PATH, newline="") as fh:
         reader = csv.reader(fh)
         next(reader)
@@ -237,14 +307,22 @@ def test_counts_match_independent_csv_reader(tables):
             iq = qidx[round(float(row[2]), 9)]
             ie = eidx[round(float(row[3]), 9)]
             ii = iidx[round(float(row[4]), 9)]
-            acc = 0.0
-            for ih, field in enumerate(row[5:]):
+            arr = ref.setdefault((row[0], row[1]), np.zeros(REF_SHAPE))
+            fields = row[5:]
+            assert len(fields) == REF_SHAPE[3]
+            for ih, field in enumerate(fields):
                 if field.strip():
-                    acc += float(field) * math.sqrt(V[iq, ie, ii, ih])
-            totals[(row[0], row[1])] = totals.get((row[0], row[1]), 0.0) + acc
-    assert set(totals) == set(tables)
-    for k, v in totals.items():
-        assert v == pytest.approx(float(tables[k].sum()), rel=1e-12, abs=1e-6)
+                    arr[iq, ie, ii, ih] = (
+                        float(field) * math.sqrt(V[iq, ie, ii, ih])
+                    )
+            nrows += 1
+    assert nrows == 32 * 29 * 8 * 11
+    assert set(ref) == set(tables)
+    for k, arr in ref.items():
+        # implementation rounds to integers; the raw inversion must already
+        # be within 1e-6 of those integers, cell by cell.
+        assert np.abs(arr - tables[k]).max() < 1e-6, k
+        assert np.array_equal(np.round(arr), tables[k]), k
 
 
 def test_raw_cells_are_not_counts(tables):
@@ -340,8 +418,8 @@ def test_neo_class_is_exactly_the_q_lt_1p3_part_of_ss(variant, tables):
     """digest2's NEO test is q < 1.3 and 1.3 is the qpart[7] bin edge."""
     ss = tables[(variant, "SS")]
     neo = tables[(variant, "NEO")]
-    iq13 = int(np.searchsorted(QPART, Q_NEO))  # == 7, upper edge 1.3
-    assert QPART[iq13] == Q_NEO
+    iq13 = int(np.searchsorted(REF_QPART, Q_NEO))  # == 7, upper edge 1.3
+    assert REF_QPART[iq13] == Q_NEO
     assert np.abs(ss[: iq13 + 1] - neo[: iq13 + 1]).max() == 0.0
     assert neo[iq13 + 1:].sum() == 0.0
 
@@ -467,7 +545,7 @@ def test_last_h_bin_is_truncated_not_clamped(pair_all):
     digest42 truncates instead: [24, 25.5) carries density, >= 25.5 is zero.
     """
     _, other = pair_all
-    el, _h = bin_centre(other, populated_bin(other, ih=len(HPART) - 1))
+    el, _h = bin_centre(other, populated_bin(other, ih=len(REF_HPART) - 1))
     assert other.density(el, 24.0) > 0.0
     assert other.density(el, 25.4999) > 0.0
     assert other.density(el, 25.5) == 0.0
@@ -505,19 +583,19 @@ def test_binning_rule_matches_digest2(pair_all):
     ideg = rng.uniform(-1.0, 190.0, n)
     h = rng.uniform(-1.0, 27.0, n)
     # sprinkle exact edges
-    q[:29] = QPART
-    e[:8] = EPART
-    ideg[:11] = IPART_DEG
-    h[:18] = HPART
+    q[:29] = REF_QPART
+    e[:8] = REF_EPART
+    ideg[:11] = REF_IPART_DEG
+    h[:18] = REF_HPART
 
     iq, ie, ii, ih, ok = neo.bin_indices(
         np.stack([q, e, np.radians(ideg)], axis=-1), h
     )
     for k in range(n):
-        bq = naive_bin(QPART, q[k])
-        be = naive_bin(EPART, e[k])
-        bi = naive_bin(IPART_DEG, ideg[k])
-        bh = naive_bin(HPART, h[k])
+        bq = naive_bin(REF_QPART, q[k])
+        be = naive_bin(REF_EPART, e[k])
+        bi = naive_bin(REF_IPART_DEG, ideg[k])
+        bh = naive_bin(REF_HPART, h[k])
         negative = q[k] < 0 or e[k] < 0 or ideg[k] < 0 or h[k] < 0
         want_ok = (bq is not None and be is not None and bi is not None
                    and bh is not None and not negative)
@@ -753,6 +831,86 @@ def test_from_classes_diagnostic(tables):
     h = Digest2Histogram.from_classes(MODEL_PATH, ("N22",), "NEO")
     assert h.total_count == pytest.approx(tables[("All", "N22")].sum(), abs=0.5)
     assert h.classes == "N22"
+
+
+def test_read_returns_isolated_dict(tables):
+    """A caller mutating the returned dict must not poison the cache."""
+    d1 = read_digest2_model(MODEL_PATH)
+    d1.pop(("All", "SS"))
+    d1[("All", "NEO")] = "corrupted"
+    d2 = read_digest2_model(MODEL_PATH)
+    assert ("All", "SS") in d2
+    assert isinstance(d2[("All", "NEO")], np.ndarray)
+    assert d2[("All", "NEO")].sum() == pytest.approx(277469.0, abs=0.5)
+    # the arrays themselves are read-only
+    with pytest.raises(ValueError):
+        d2[("All", "SS")][0, 0, 0, 0] = 1.0
+
+
+def test_unknown_class_and_variant_raise_value_error():
+    with pytest.raises(ValueError, match="unknown model variant"):
+        Digest2Histogram.neo_other_pair(MODEL_PATH, variant="nope")
+    with pytest.raises(ValueError, match="unknown model variant"):
+        Digest2Histogram.from_classes(MODEL_PATH, ("SS",), "other",
+                                      variant="nope")
+    with pytest.raises(ValueError, match="unknown digest2 class"):
+        Digest2Histogram.from_classes(MODEL_PATH, ("MBA",), "other")
+    with pytest.raises(ValueError, match="unknown digest2 class"):
+        Digest2Histogram.from_classes(MODEL_PATH, ("SS",), "other",
+                                      subtract=("TNO",))
+
+
+def test_bin_indices_validates_shape_and_flags_out_of_support(pair_all):
+    neo, _ = pair_all
+    with pytest.raises(ValueError):
+        neo.bin_indices(np.array([1.0, 0.15]), 18.0)
+    with pytest.raises(ValueError):
+        neo.bin_indices(np.array(1.0), 18.0)
+    # out-of-support inputs still return clamped, plausible-looking indices
+    el = np.array([[1e6, 0.15, 0.1], [-5.0, 0.15, 0.1]])
+    iq, ie, ii, ih, ok = neo.bin_indices(el, np.array([18.0, 18.0]))
+    assert not ok.any()
+    assert np.all((iq >= 0) & (iq < 29))       # hence the docstring warning
+
+
+def test_sample_within_bin_never_reaches_upper_edge(pair_all):
+    """NOTE-2 guard: lo + u*(hi-lo) must not round up to hi."""
+    neo, other = pair_all
+    rng = np.random.default_rng(31337)
+    for comp in (neo, other):
+        e6, h = comp.sample(200_000, rng)
+        q = e6[:, 0] * (1.0 - e6[:, 1])
+        iq, ie, ii, ih, ok = comp.bin_indices(
+            np.stack([q, e6[:, 1], e6[:, 2]], axis=-1), h
+        )
+        assert ok.all()
+        for vals, edges, idx in ((q, comp.q_edges, iq),
+                                 (e6[:, 1], comp.e_edges, ie),
+                                 (e6[:, 2], comp.i_edges, ii),
+                                 (h, comp.h_edges, ih)):
+            assert np.all(vals >= edges[idx])
+            assert np.all(vals < edges[idx + 1])
+
+
+def test_sample_unbound_fraction_is_documented(pair_all, pair_unk):
+    """MAJOR-1: ~2% of NEO draws are unbound; the docstring must not
+    understate it and callers must be able to reproduce the number."""
+    for pair, want_neo in ((pair_all, 0.01915), (pair_unk, 0.02228)):
+        neo, other = pair
+        # exact expectation: half of the [0.9, 1.1) top e bin
+        exact = 0.5 * np.asarray(neo.counts)[:, 7].sum() / neo.total_count
+        assert exact == pytest.approx(want_neo, abs=5e-5)
+        e6, _ = neo.sample(500_000, np.random.default_rng(8))
+        frac = float((e6[:, 1] >= 1.0).mean())
+        assert frac == pytest.approx(exact, abs=0.002)
+        assert np.all(e6[e6[:, 1] > 1.0, 0] < 0.0)      # a < 0 when e > 1
+        assert np.all(e6[e6[:, 1] < 1.0, 0] > 0.0)
+        # the "other" component is unaffected at the 1e-5 level
+        oexact = 0.5 * np.asarray(other.counts)[:, 7].sum() / other.total_count
+        assert oexact < 1e-5
+    assert "unbound" in Digest2Histogram.sample.__doc__.lower()
+    assert "1.92" in Digest2Histogram.sample.__doc__
+    assert "2.23" in Digest2Histogram.sample.__doc__
 
 
 def test_read_rejects_bad_header(tmp_path):

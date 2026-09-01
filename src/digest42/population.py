@@ -43,10 +43,19 @@ through the 4-D histogram, so it wants a per-slice count.)  We therefore
 undo the scaling to recover absolute object counts, which is what an
 *absolutely calibrated* density needs (DESIGN §2.4, D-3).  The recovered
 values are integers to < 2e-9 absolute in every one of the 45 936 x 32 cells,
-which is a decisive confirmation of the inversion; ``read_digest2_model``
-checks this at load time.  With the scaling undone the "All"/"SS" table sums
-to 14 542 147 objects — the S3M object count — whereas the raw cell values
+which is the decisive confirmation of the inversion (it stands on its own —
+nothing else is needed to establish it); ``read_digest2_model`` checks this
+at load time.  With the scaling undone the "All"/"SS" table sums to
+14 542 147 objects — the model file's own total — whereas the raw cell values
 sum to a meaningless 6.3e7.
+
+That total is *not* claimed to equal S3M's raw object count: ``s3mbin.c``
+silently drops orbits outside the model box (q <= 0, e > 1.1, i >= 180, and
+anything binning out of range), and ``muk.c`` then raises individual cells to
+the known-catalogue count wherever ``known > all`` (4 375 bins holding
+640 904 objects have All > 0 with Unk == 0, the signature of that fix-up).
+The file's total is therefore the total of the *model as distributed*, which
+is exactly what an absolutely calibrated prior should be normalized to.
 
 **Class overlap.**  digest2's 15 orbit classes do *not* partition the solar
 system: ``Int`` ("MPC interesting") overlaps everything, ``N18`` and ``N22``
@@ -126,7 +135,13 @@ class PopulationDensity(ABC):
             density is per unit (elements3, H) volume with the uniform-angle
             factor 1/(2 pi)^3 ALREADY INCLUDED, i.e. it is the full 7D density
             n(elements3, Omega, omega, M, H) which happens not to depend on
-            the angles. Units: objects / (AU * rad * mag).
+            the angles. Units: objects per unit
+            q [AU] x e [-] x i [rad] x Omega, omega, M [rad^3] x H [mag],
+            i.e. objects / (AU * rad^4 * mag).
+            (WP0 contract amendment, authorized by the supervisor after the
+            WP4 review: the original wording read "AU * rad * mag", which
+            omitted the three angular dimensions carried by the included
+            1/(2 pi)^3 factor.)
         H : (...,) absolute magnitudes.
 
         Returns
@@ -252,6 +267,35 @@ _I_LOOKUP = _edge_lookup(IPART_DEG)
 
 _CACHE: dict[tuple, dict[tuple[str, str], np.ndarray]] = {}
 
+#: Every table name the model file carries.
+D2_TABLES = ("SS",) + D2_CLASSES
+
+
+def _check_variant(variant: str) -> str:
+    if variant not in D2_VARIANTS:
+        raise ValueError(
+            f"unknown model variant {variant!r}; valid variants are "
+            f"{', '.join(D2_VARIANTS)}"
+        )
+    return variant
+
+
+def _get_table(tables, variant: str, name: str, path) -> np.ndarray:
+    """Fetch one (variant, class) table with a message a human can act on."""
+    _check_variant(variant)
+    if name not in D2_TABLES:
+        raise ValueError(
+            f"unknown digest2 class {name!r}; valid classes are "
+            f"{', '.join(D2_TABLES)}"
+        )
+    try:
+        return tables[(variant, name)]
+    except KeyError:
+        raise ValueError(
+            f"{path}: model file has no table for class {name!r}, "
+            f"variant {variant!r}"
+        ) from None
+
 
 def read_digest2_model(
     path: str | os.PathLike,
@@ -278,12 +322,15 @@ def read_digest2_model(
     dict mapping ``(variant, class)`` -> (29, 8, 11, 18) float array of
     **object counts** in the (q, e, i, H) bins, with ``variant`` in
     ``D2_VARIANTS`` and ``class`` in ``("SS",) + D2_CLASSES``.
+
+    The returned dict is a fresh shallow copy on every call (so rebinding
+    entries cannot poison the cache) and the arrays it holds are read-only.
     """
     path = os.fspath(path)
     st = os.stat(path)
     key = (os.path.abspath(path), st.st_size, st.st_mtime_ns, bool(integer_counts))
     if use_cache and key in _CACHE:
-        return _CACHE[key]
+        return dict(_CACHE[key])
 
     nq, ne, ni, nh = MODEL_SHAPE
     tables: dict[tuple[str, str], np.ndarray] = {}
@@ -363,6 +410,7 @@ def read_digest2_model(
 
     if use_cache:
         _CACHE[key] = tables
+        return dict(tables)
     return tables
 
 
@@ -472,19 +520,10 @@ class Digest2Histogram(PopulationDensity):
         subtraction is exact (residual identically zero) and the two
         components are exactly complementary at the q = 1.3 AU bin edge.
         """
-        if variant not in D2_VARIANTS:
-            raise ValueError(
-                f"variant must be one of {D2_VARIANTS}, got {variant!r}"
-            )
+        _check_variant(variant)
         tables = read_digest2_model(path)
-        try:
-            ss = tables[(variant, "SS")]
-            neo = tables[(variant, "NEO")]
-        except KeyError as exc:
-            raise ValueError(
-                f"{path}: missing table {exc.args[0]} required for the "
-                "NEO/other split"
-            ) from None
+        ss = _get_table(tables, variant, "SS", path)
+        neo = _get_table(tables, variant, "NEO", path)
 
         other = ss - neo
         worst = float(other.min())
@@ -517,6 +556,7 @@ class Digest2Histogram(PopulationDensity):
         several of them double-counts; this is a diagnostic entry point, not
         the way the NEO/other pair is built (use :meth:`neo_other_pair`).
         """
+        _check_variant(variant)
         tables = read_digest2_model(path)
         classes = tuple(classes)
         subtract = tuple(subtract)
@@ -524,9 +564,9 @@ class Digest2Histogram(PopulationDensity):
             raise ValueError("classes must be non-empty")
         counts = np.zeros(MODEL_SHAPE)
         for name in classes:
-            counts += tables[(variant, name)]
+            counts += _get_table(tables, variant, name, path)
         for name in subtract:
-            counts -= tables[(variant, name)]
+            counts -= _get_table(tables, variant, name, path)
         counts = np.clip(counts, 0.0, None)
         desc = " + ".join(classes)
         if subtract:
@@ -571,9 +611,30 @@ class Digest2Histogram(PopulationDensity):
         Bins are drawn with probability proportional to their object count;
         (q, e, i, H) are uniform within the chosen bin (which is exactly the
         piecewise-constant density) and Omega, omega, M are uniform in
-        [0, 2 pi).  The returned semi-major axis is a = q / (1 - e); the
-        model's top e bin is [0.9, 1.1), so a handful of samples are
-        unbound (a < 0) — see the module notes and D-8.
+        [0, 2 pi).  The returned semi-major axis is a = q / (1 - e).
+
+        UNBOUND DRAWS — NOT NEGLIGIBLE FOR THE NEO COMPONENT.  The model's
+        top eccentricity bin is [0.9, 1.1), which straddles e = 1, and half
+        of a uniform-in-bin draw from it lands at e >= 1.  That bin holds
+        10 628 of the 277 469 All/NEO objects and 10 501 of the 235 675
+        Unk/NEO objects, so the expected unbound fraction is
+
+            All/NEO   1.92 %      All/other   0.0006 %
+            Unk/NEO   2.23 %      Unk/other   0.00004 %
+
+        (measured on 2e6 draws: 1.92 % / 2.23 % / 0.0004 % / 0.0000 %).
+        For those draws a = q / (1 - e) <= 0 (and a = -inf at e exactly 1).
+
+        **Callers generating test populations (WP6) must filter the unbound
+        draws (keep e < 1) and report the discarded fraction.**  Doing so does
+        not break the §4.1 self-consistency argument: the classifier's
+        admissible region admits only bound orbits (D-8), so the likelihood
+        side truncates the population at e < 1 identically.  Prior and test
+        population therefore still match, and calibration is preserved — but
+        the discarded fraction must be reported, because it is ~2 % of the
+        NEO component and only ~1e-5 of the "other" component, i.e. it
+        changes the components' relative normalization by ~2 % if it is
+        silently dropped from one side only.
         """
         n = int(n)
         if n < 0:
@@ -595,8 +656,17 @@ class Digest2Histogram(PopulationDensity):
         iq, ie, ii, ih = np.unravel_index(k, MODEL_SHAPE)
 
         def _uniform_in(edges, idx):
+            """Uniform in [edges[idx], edges[idx+1]), strictly half-open.
+
+            ``lo + u * (hi - lo)`` with u < 1 can still round up to exactly
+            ``hi`` in floating point, which would place the draw in the next
+            bin (or outside the support, for the top bin).  Clamp to the
+            largest double below ``hi``.
+            """
             lo = edges[idx]
-            return lo + rng.random(n) * (edges[idx + 1] - lo)
+            hi = edges[idx + 1]
+            return np.minimum(lo + rng.random(n) * (hi - lo),
+                              np.nextafter(hi, lo))
 
         q = _uniform_in(self.q_edges, iq)
         ecc = _uniform_in(self.e_edges, ie)
@@ -642,8 +712,21 @@ class Digest2Histogram(PopulationDensity):
 
         Exposed for validation/diagnostics (WP6) so callers can histogram
         samples on the model's own bins without duplicating the lookup rule.
+
+        .. warning::
+           The four index arrays are **clamped into range** for every input,
+           including out-of-support and NaN ones, so they always look like
+           plausible bin numbers.  Callers MUST mask on the returned
+           ``in_support`` flag before using them; histogramming without the
+           mask silently piles out-of-support points onto the edge bins.
+           :meth:`density` applies the mask for you and returns 0.0 there.
         """
         elements3 = np.asarray(elements3, dtype=float)
+        if elements3.ndim == 0 or elements3.shape[-1] != 3:
+            raise ValueError(
+                f"elements3 must have trailing dimension 3, got shape "
+                f"{elements3.shape}"
+            )
         q, ecc, inc = (elements3[..., 0], elements3[..., 1], elements3[..., 2])
         q, ecc, inc, h = np.broadcast_arrays(
             q, ecc, inc, np.asarray(H, dtype=float)
