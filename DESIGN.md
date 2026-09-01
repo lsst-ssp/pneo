@@ -162,6 +162,17 @@ likelihood accumulated as $\sum_k w_k\, n_C(E_k, H_k)\, |J_k|$ with $w_k$ the ce
 measures. Monte Carlo sampling of $\mathcal{AR}$ is a drop-in alternative when covariance
 marginalization is added.
 
+**Integrable-singularity caveat (WP2 review).** The exact measure carries
+$|J| \propto 1/(e \sin i)$ — for a smooth population, $n(e) \to 0$ as $e \to 0$ cancels
+it, but a piecewise-constant density (the digest2 histogram) is finite across
+$e \in [0, 0.1)$ and $i \in [0°, 2°)$, so the integrand has genuine integrable
+singularities along the $e = 0$ and $i = 0$ curves in the $(\rho, \dot\rho)$ plane. The
+integral converges, but grid quadrature across those curves converges slowly; expect mild
+grid dependence of $\Lambda$ for near-ecliptic, near-circular hypotheses. The
+grid-refinement acceptance tests (WP5, §4.1) are the guard; if they show drift, the fix
+is local node refinement or an $e$-, $\sin i$-aware quadrature near the curves, not a
+change to the (correct) Jacobian.
+
 ### 2.6 Support truncation and its known artifact
 
 Outside a model's declared support (element ranges, $H$ range) the density is zero — hard
