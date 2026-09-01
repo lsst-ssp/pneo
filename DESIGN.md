@@ -286,7 +286,32 @@ so `sample()` yields formally unbound objects — measured at 1.93% of All/NEO d
 unbound draws and report the discarded fraction per component. Calibration is preserved:
 the classifier's admissible region restricts the likelihood integral to bound orbits
 identically, so both the generating distribution and the effective prior are the
-bound-restricted model.
+bound-restricted model. Rejection must be **joint** (an unbound/geometry/V-cut rejection
+discards the class draw too): per-class redraw would reproduce the unconditioned mixture
+instead of the bound-restricted, selection-conditioned one the posterior describes —
+verified to produce a ~2.5× calibration distortion in a toy study (WP6 review).
+
+**What the gate does and does not validate (WP6 review).** Two structural limits, to be
+stated rather than discovered:
+
+1. *Jacobian normalization cancels.* With both v0 components in the same
+   parameterization, $P(\mathrm{NEO})$ is exactly invariant under $|J| \to c\,|J|$ — the
+   gate validates the Jacobian's **local ρ-shape** (the $(\rho,\dot\rho)$ posterior is a
+   near-delta: median 99.99% of mass within a factor 2 of the true ρ) and the collapse
+   statistics, not the measure's absolute scale. The (1−e) qei/aei pairing is pinned by
+   unit tests and the exact Delaunay closed form instead (WP2).
+2. *Reliability power scales with the accepted NEO count.* At mixture proportions,
+   $N = 10^4$ yields ~65 NEOs: enough to constrain a global odds error only to roughly
+   ±100% above $p \approx 0.05$ (a 20% odds error produces an expected significance of
+   0.8σ; 3σ requires $N \approx 1.4\times10^5$). The reliability criterion must be sized
+   accordingly: bootstrap-calibrated thresholds (exact Type-I regardless of binning or
+   base rate), bins with equal *expected NEO count*, the corrected enriched-mode variance
+   $w_{\rm NEO} w_{\rm other} \sum p(1-p)$, and the single global statistic
+   $Z_{\rm tot} = \sum w(y-p)/\sqrt{w_{\rm NEO} w_{\rm other} \sum p(1-p)}$ with a fitted
+   odds-scale $\hat c$ — the most powerful summary at these base rates. NEO enrichment
+   amplifies power only at $p \lesssim 0.02$ (use $f \approx 0.1$, never 0.5, and only as
+   a low-p diagnostic). A claim of calibration above $p \approx 0.05$ requires the
+   $N \sim 10^5$ run.
 
 ### 4.2 Method comparison on shared inputs (v0)
 
