@@ -18,7 +18,22 @@ absolutely calibrated, there is no tunable prior. This replaces digest2's heuris
 with a calibrated probability, using — in v0 — digest2's own population model as input, so
 the two codes differ in method alone.
 
-**Status (2026-08):** design phase. No code yet.
+**Status (2026-09):** v0 implemented and validated — the DESIGN §4.1 self-consistency
+gate **passes** (N = 2×10⁴: reliability, HPD uniformity, collapse coverage all within
+criteria; see [validation/GATE_RESULTS.md](validation/GATE_RESULTS.md)). Remaining for
+v0: the digest2 head-to-head comparison (WP7) and docs polish.
+
+```python
+from astropy.time import Time
+from digest42 import Attributable, Digest2Histogram, classify
+
+neo, other = Digest2Histogram.neo_other_pair("data/digest2.model.csv")  # scripts/fetch_digest2_model.py
+att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,     # rad, rad/day
+                   epoch=Time("2026-03-15T06:00:00"), v_mag=21.0)
+res = classify(att, neo, other)
+print(res.p_neo, res.log_lr)
+res.plot_posterior_map()   # (rho, rho_dot) diagnostic
+```
 
 ## Documentation
 
