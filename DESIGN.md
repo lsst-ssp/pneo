@@ -169,9 +169,18 @@ $e \in [0, 0.1)$ and $i \in [0°, 2°)$, so the integrand has genuine integrable
 singularities along the $e = 0$ and $i = 0$ curves in the $(\rho, \dot\rho)$ plane. The
 integral converges, but grid quadrature across those curves converges slowly; expect mild
 grid dependence of $\Lambda$ for near-ecliptic, near-circular hypotheses. The
-grid-refinement acceptance tests (WP5, §4.1) are the guard; if they show drift, the fix
-is local node refinement or an $e$-, $\sin i$-aware quadrature near the curves, not a
-change to the (correct) Jacobian.
+grid-refinement acceptance tests (WP5, §4.1) are the guard; the fix is quadrature
+refinement, never a change to the (correct) Jacobian.
+
+**Where the quadrature error actually lives (WP5 review).** With the digest2 histogram,
+the dominant grid error is not the $e$/$\sin i$ singularity but the **ρ-axis staircase**:
+$H(\rho)$ depends on $\rho$ alone, so every H-bin and q-bin edge is a ρ-aligned
+discontinuity of the integrand, and $\dot\rho$ refinement buys nothing (measured: at
+fixed cost, $800{\times}100$ beats $400{\times}200$ by ~2× and $200{\times}400$ equals
+$200{\times}100$). Sensible v0 grids are ρ-heavy — $n_\rho \approx 1200$,
+$n_{\dot\rho} \approx 50$ (p90 $|\Delta p| \approx 0.0035$, max $\approx 0.01$ vs a
+$1200{\times}600$ reference). The targeted future fix is node placement on the H-bin
+edge curves, not global refinement.
 
 ### 2.6 Support truncation and its known artifact
 
