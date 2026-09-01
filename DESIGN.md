@@ -31,6 +31,15 @@ same inputs, different math — any difference in performance is attributable to
 - Methodology first, then Rubin-scale application; v0 optimizes for correctness and
   diagnostics, not throughput.
 
+**Performance goal.** Batch triage at Rubin scale is a v0 capability (~0.5 s
+CPU/tracklet ⇒ ~14 CPU-hours per 10⁵ tracklets). The eventual goal is **per-alert
+low-latency scoring** — scoring a tracklet in the alert-processing path at ~10 ms
+latency, i.e. at or below digest2's per-tracklet cost while computing the full Bayesian
+measure. The optimization path (fused Kepler/Jacobian, H-bin-edge-aware ρ nodes,
+cross-tracklet vectorization, JAX/GPU) is tracked in
+[issue #1](https://github.com/mjuric/digest42/issues/1); any change must re-pass the
+§4.1 gate with no growth in the HPD estimator gap.
+
 ## 2. Formalism
 
 ### 2.1 Geometry: from observables to orbits
@@ -349,5 +358,6 @@ mismatch as much as method quality.
   §4.3.
 - **v2 — full mixture & scale.** Parametric Trojans/Hildas/TNO components (with angular
   structure where it matters); SMB belt model when released; Centaur re-fit against the
-  PS1 selection function; comet-scope decision; vectorization/throughput work for
-  alert-scale operation.
+  PS1 selection function; comet-scope decision; the per-alert low-latency performance
+  goal (§1, issue #1) — fused Kepler/Jacobian, adaptive ρ nodes on H-bin edges,
+  cross-tracklet vectorization, JAX/GPU.
