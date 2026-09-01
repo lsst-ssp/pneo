@@ -32,6 +32,7 @@ __all__ = [
     "absolute_magnitude",
     "apparent_magnitude",
     "jacobian_state_wrt_observables",
+    "jacobian_state_wrt_elements",
     "jacobian_elements_wrt_state",
     "ranging_jacobian_det",
     "observables_from_elements",
@@ -47,6 +48,23 @@ __all__ = [
 _ECC_DEGENERATE = 1e-14  # |e| below this -> periapsis direction undefined
 _INC_DEGENERATE = 1e-14  # |sin i| below this -> node direction undefined
 
+# Conditioning ceiling for inverting d(state)/d(elements) in
+# `jacobian_elements_wrt_state`.  Above it the inverse is returned as NaN
+# rather than as a plausible-looking but wrong matrix.
+#
+# Justification (measured, WP2 review): the relative error of |det J^-1|
+# against the exact Delaunay value 2/(mu^1.5 sqrt(a) e sin i) tracks
+# eps * cond_inf almost exactly --
+#     cond_inf   1e6    1e8    1e10   1e12   1e13   1e16
+#     rel. err   2e-13  2e-11  2e-9   5e-7   1e-6   4e-3
+# so 1e12 is the largest conditioning at which the result still meets the WP2
+# accuracy bar of 1e-6.  It also sits >3 decades above the worst conditioning
+# seen anywhere in the WP2 sweeps (max 6.0e8 over 20 000 orbits with
+# a in [0.5, 50], e in [0, 0.95], isotropic i; 1.3e7 for TNOs), so no
+# physically interesting orbit is masked: reaching it needs e or sin(i) below
+# ~1e-9.
+_COND_MAX = 1e12
+
 # Two-term IAU H,G phase function coefficients (Bowell et al. 1989, Asteroids II,
 # "Application of photometric models to asteroids", eqs. A4-A5).
 _HG_A = (3.33, 1.87)
@@ -59,8 +77,13 @@ _HG_B = (0.63, 1.22)
 
 
 def unit_vector(ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
-    """Topocentric line-of-sight unit vector u_hat(ra, dec), equ frame. -> (..., 3)"""
-    ra, dec = np.asarray(ra), np.asarray(dec)
+    """Topocentric line-of-sight unit vector u_hat(ra, dec), equ frame. -> (..., 3)
+
+    `ra` and `dec` are broadcast against each other first, so mixed
+    scalar/array calls (e.g. a whole declination row at fixed ra) follow the
+    module's batching convention instead of raising from np.stack.
+    """
+    ra, dec = np.broadcast_arrays(np.asarray(ra, dtype=float), np.asarray(dec, dtype=float))
     cd = np.cos(dec)
     return np.stack([cd * np.cos(ra), cd * np.sin(ra), np.sin(dec)], axis=-1)
 
@@ -71,8 +94,16 @@ def tangent_basis(ra: np.ndarray, dec: np.ndarray) -> tuple[np.ndarray, np.ndarr
     du/dra is the RAW partial (no cos(dec) factor), consistent with
     Attributable.ra_rate being d(ra)/dt. Implemented in WP0 and shared by
     WP2/WP3; do not reimplement.
+
+    `ra` and `dec` are broadcast against each other first (WP2 review fix,
+    supervisor-authorized): without it a mixed scalar/array call such as
+    tangent_basis(ra=(5,), dec=scalar) raised from np.stack while the
+    transposed call succeeded, and the asymmetry leaked into
+    `topocentric_to_heliocentric` / `ranging_jacobian_det` while
+    `jacobian_state_wrt_observables` (which pre-broadcasts) disagreed — the two
+    halves of one composition must accept the same inputs.
     """
-    ra, dec = np.asarray(ra), np.asarray(dec)
+    ra, dec = np.broadcast_arrays(np.asarray(ra, dtype=float), np.asarray(dec, dtype=float))
     sa, ca = np.sin(ra), np.cos(ra)
     sd, cd = np.sin(dec), np.cos(dec)
     u = np.stack([cd * ca, cd * sa, sd], axis=-1)
@@ -90,9 +121,10 @@ def _tangent_basis_second(ra, dec):
         d2u/dra ddec   = ( sin(dec) sin(ra), -sin(dec) cos(ra), 0)
         d2u/ddec^2     = (-cos(dec) cos(ra), -cos(dec) sin(ra), -sin(dec)) = -u
 
-    Each returned array has shape (..., 3), equ frame.
+    Each returned array has shape (..., 3), equ frame.  `ra` and `dec` are
+    broadcast against each other first, as in `tangent_basis`.
     """
-    ra, dec = np.asarray(ra), np.asarray(dec)
+    ra, dec = np.broadcast_arrays(np.asarray(ra, dtype=float), np.asarray(dec, dtype=float))
     sa, ca = np.sin(ra), np.cos(ra)
     sd, cd = np.sin(dec), np.cos(dec)
     z = np.zeros_like(sd * ca)
@@ -489,6 +521,17 @@ def hg_phase_integral(alpha_ph: np.ndarray, G: float = G_SLOPE_DEFAULT) -> np.nd
     Phi(0) = 1 exactly; Phi -> 0 as alpha -> pi.  `alpha_ph` [rad] is clipped
     to [0, pi] (values outside arise only from round-off in the caller).
     Vectorized over alpha; G is a scalar.
+
+    Caveat (v0 scope).  This is the two-term exponential form ONLY.  The full
+    Bowell et al. prescription additionally blends in a spline/linear branch at
+    large phase; without it this form UNDERPREDICTS Phi for alpha greater than
+    roughly 120 deg (e.g. Phi = 4.1e-4 at 150 deg with G = 0.15, i.e. ~8.4 mag
+    of darkening).  Consequence for the pipeline: at such phase angles — only
+    reachable at very small rho, since the phase angle is bounded by the
+    observer-Sun-object geometry — the implied H from
+    `absolute_magnitude` comes out too BRIGHT (too small).  That is the
+    conservative direction for NEO triage and the affected corner of the
+    admissible region is negligible, so v0 accepts it deliberately.
     """
     alpha = np.asarray(alpha_ph, dtype=float)
     a = np.clip(alpha, 0.0, np.pi)
@@ -504,6 +547,25 @@ def hg_phase_integral(alpha_ph: np.ndarray, G: float = G_SLOPE_DEFAULT) -> np.nd
     return np.where(np.isnan(alpha), np.nan, out)
 
 
+def _check_r_helio(v_mag, rho, alpha_ph, r_helio):
+    """Reject a heliocentric POSITION VECTOR passed as the distance `r_helio`.
+
+    `r_helio` is |r| [AU], a magnitude.  Passing the (..., 3) position vector
+    instead used to broadcast silently and return a plausible-looking 3-array
+    of magnitudes (WP2 review finding).  The guard: `r_helio` may not introduce
+    an axis that none of the other (scalar-valued) arguments has, which catches
+    both the (3,) single-object case and the (N, 3) batched case.
+    """
+    others = max(np.ndim(v_mag), np.ndim(rho), np.ndim(alpha_ph))
+    if np.ndim(r_helio) > others:
+        raise ValueError(
+            "r_helio must be the heliocentric DISTANCE |r| [AU], not the position "
+            f"vector: got ndim {np.ndim(r_helio)} (shape {np.shape(r_helio)}) against "
+            f"ndim {others} for (v_mag/H, rho, alpha_ph). Pass "
+            "np.linalg.norm(r_vec, axis=-1)."
+        )
+
+
 def absolute_magnitude(
     v_mag: np.ndarray,
     rho: np.ndarray,
@@ -516,7 +578,11 @@ def absolute_magnitude(
     `rho` is the topocentric distance [AU], `r_helio` the heliocentric distance
     [AU] (a SCALAR magnitude, not a vector), `alpha_ph` the phase angle [rad].
     Exact inverse of `apparent_magnitude` with the same arguments.
+
+    Raises ValueError if `r_helio` adds a dimension the other arguments lack —
+    i.e. if a position vector was passed where a distance was expected.
     """
+    _check_r_helio(v_mag, rho, alpha_ph, r_helio)
     v_mag = np.asarray(v_mag, dtype=float)
     rho = np.asarray(rho, dtype=float)
     r_helio = np.asarray(r_helio, dtype=float)
@@ -535,7 +601,11 @@ def apparent_magnitude(
     """Inverse of absolute_magnitude.
 
     V = H + 5 log10(rho * r) - 2.5 log10 Phi(alpha; G).
+
+    Raises ValueError if `r_helio` adds a dimension the other arguments lack —
+    i.e. if a position vector was passed where a distance was expected.
     """
+    _check_r_helio(H, rho, alpha_ph, r_helio)
     H = np.asarray(H, dtype=float)
     rho = np.asarray(rho, dtype=float)
     r_helio = np.asarray(r_helio, dtype=float)
@@ -798,8 +868,15 @@ def jacobian_elements_wrt_state(r_ecl: np.ndarray, v_ecl: np.ndarray) -> np.ndar
       * sin i -> 0 : Omega and omega are individually undefined; columns 3 and 4
                    of the forward Jacobian coincide.
       * e -> 1 / a -> inf : the bound-orbit parameterization degenerates.
-    Non-bound states return NaN rows.  Numerically singular cases (|det| at the
-    round-off level) also return NaN rather than raising.
+
+    NaN is returned (never an exception, never a plausible-looking wrong
+    matrix) when the state is unbound or non-finite, when the forward Jacobian
+    is exactly singular, OR when it is merely NUMERICALLY singular -- judged by
+    the infinity-norm condition estimate cond_inf(J) = ||J||_inf ||J^-1||_inf
+    exceeding `_COND_MAX` = 1e12, the point beyond which the inverse no longer
+    meets the WP2 1e-6 accuracy bar (see the constant's derivation).  The
+    estimate costs two reductions on the already-computed inverse, so the guard
+    is essentially free.
     """
     elements = elements_from_state(r_ecl, v_ecl)
     Jse = jacobian_state_wrt_elements(elements)
@@ -813,7 +890,16 @@ def jacobian_elements_wrt_state(r_ecl: np.ndarray, v_ecl: np.ndarray) -> np.ndar
     safe = np.where(nonsingular[..., None, None], safe, np.eye(6))
 
     Jes = np.linalg.inv(safe)
-    ok = finite & nonsingular
+
+    # Infinity-norm condition estimate (LAPACK-style): cheap, and within a
+    # factor of ~n of the true 2-norm condition number -- ample for a guard
+    # whose threshold sits three decades clear of any real orbit.
+    with np.errstate(invalid="ignore", over="ignore"):
+        norm_fwd = np.max(np.sum(np.abs(safe), axis=-1), axis=-1)
+        norm_inv = np.max(np.sum(np.abs(Jes), axis=-1), axis=-1)
+        well_conditioned = (norm_fwd * norm_inv) <= _COND_MAX
+
+    ok = finite & nonsingular & well_conditioned
     return np.where(ok[..., None, None], Jes, np.nan)
 
 

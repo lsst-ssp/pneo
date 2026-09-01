@@ -280,6 +280,61 @@ def test_topocentric_to_heliocentric_matches_definition():
     assert np.allclose(r1, r[0]) and np.allclose(v1, v[0])
 
 
+def test_mixed_scalar_array_broadcasting():
+    """WP2 review regression: ra/dec must broadcast against each other.
+
+    Before the fix, `tangent_basis(ra=(5,), dec=scalar)` raised from np.stack
+    while the transposed call worked; the asymmetry propagated into
+    `topocentric_to_heliocentric` and `ranging_jacobian_det`, and disagreed
+    with `jacobian_state_wrt_observables`, which pre-broadcasts.  Both halves
+    of the same composition must accept the same inputs.
+    """
+    ra_arr = np.linspace(0.1, 1.1, 5)
+    dec_arr = np.linspace(-0.4, 0.4, 5)
+
+    # Both mixed orders work and agree with the fully-broadcast call.
+    for ra, dec in ((ra_arr, 0.3), (0.3, dec_arr)):
+        ra_b, dec_b = np.broadcast_arrays(np.asarray(ra, float), np.asarray(dec, float))
+        assert T.unit_vector(ra, dec).shape == (5, 3)
+        assert np.allclose(T.unit_vector(ra, dec), T.unit_vector(ra_b, dec_b))
+        got = T.tangent_basis(ra, dec)
+        ref = T.tangent_basis(ra_b, dec_b)
+        assert all(g.shape == (5, 3) for g in got)
+        assert all(np.allclose(g, r) for g, r in zip(got, ref))
+
+    # The whole composition accepts the mixed call, and matches the explicit one.
+    rng = np.random.default_rng(SEED + 21)
+    R, V = _fake_observer(5, rng)
+    kwargs = dict(ra_rate=0.004, dec_rate=-0.002, rho=1.7, rho_dot=0.006)
+    r1, v1 = T.topocentric_to_heliocentric(ra_arr, 0.3, R_obs=R, V_obs=V, **kwargs)
+    r2, v2 = T.topocentric_to_heliocentric(
+        ra_arr, np.full(5, 0.3), R_obs=R, V_obs=V, **kwargs
+    )
+    assert r1.shape == (5, 3) and np.allclose(r1, r2) and np.allclose(v1, v2)
+
+    J1 = T.jacobian_state_wrt_observables(ra_arr, 0.3, R_obs=R, V_obs=V, **kwargs)
+    J2 = T.jacobian_state_wrt_observables(ra_arr, np.full(5, 0.3), R_obs=R, V_obs=V, **kwargs)
+    assert J1.shape == (5, 6, 6) and np.allclose(J1, J2)
+
+    d1 = T.ranging_jacobian_det(ra_arr, 0.3, R_obs=R, V_obs=V, **kwargs)
+    d2 = T.ranging_jacobian_det(ra_arr, np.full(5, 0.3), R_obs=R, V_obs=V, **kwargs)
+    assert d1.shape == (5,)
+    assert np.allclose(d1, d2, equal_nan=True)
+
+
+def test_public_api_is_exported():
+    """WP2 review note: every public function appears in __all__."""
+    import inspect
+
+    public = {
+        name
+        for name, obj in vars(T).items()
+        if not name.startswith("_") and inspect.isfunction(obj) and obj.__module__ == T.__name__
+    }
+    assert public == set(T.__all__), public.symmetric_difference(T.__all__)
+    assert "jacobian_state_wrt_elements" in T.__all__
+
+
 def test_tangent_basis_geometry():
     """Sanity properties of the (non-orthonormal) tangent basis used everywhere."""
     rng = np.random.default_rng(SEED + 2)
@@ -823,6 +878,73 @@ def test_jacobians_at_regime_boundaries(a, e, i_deg, label):
     assert worst_inv < 1e-6, (label, worst_inv)
 
 
+def test_jacobian_elements_wrt_state_nan_when_ill_conditioned():
+    """WP2 review regression: no plausible-looking garbage near-degeneracy.
+
+    Previously only EXACT singularity was caught, so an e = 1e-16 state
+    returned a finite inverse whose |det| was off by a factor 0.74.  The
+    condition guard (`_COND_MAX`) must NaN out the ill-conditioned cases while
+    leaving every physically interesting orbit alone.
+    """
+    i = 0.3
+    a = 2.7
+    for e in (1e-13, 1e-16, 0.0):
+        el = np.array([a, e, i, 1.0, 2.0, 3.0])
+        r, v = T.state_from_elements(el)
+        assert np.all(np.isnan(T.jacobian_elements_wrt_state(r, v))), e
+
+    for sin_i in (1e-13, 1e-16, 0.0):
+        el = np.array([a, 0.2, math.asin(sin_i), 1.0, 2.0, 3.0])
+        r, v = T.state_from_elements(el)
+        assert np.all(np.isnan(T.jacobian_elements_wrt_state(r, v))), sin_i
+
+    # Comfortably non-degenerate cases stay finite AND accurate: e = 1e-6 is
+    # already six decades below anything in a real population.
+    for e in (1e-6, 1e-4, 0.02, 0.5):
+        el = np.array([a, e, i, 1.0, 2.0, 3.0])
+        r, v = T.state_from_elements(el)
+        J = T.jacobian_elements_wrt_state(r, v)
+        assert np.all(np.isfinite(J)), e
+        exact = 2.0 / (MU_SUN**1.5 * math.sqrt(a) * e * math.sin(i))
+        assert abs(abs(np.linalg.det(J)) / exact - 1.0) < 1e-6, e
+
+    # No orbit in the WP2 sweeps is masked by the guard.
+    rng = np.random.default_rng(SEED + 22)
+    el = _sample_elements(4000, rng, regime="mixed")
+    r, v = T.state_from_elements(el)
+    J = T.jacobian_elements_wrt_state(r, v)
+    assert np.all(np.isfinite(J))
+
+    # Batched mixed good/degenerate input: per-row masking, no exception.
+    el_mix = np.stack([np.array([a, 0.3, i, 1.0, 2.0, 3.0]), np.array([a, 0.0, i, 1.0, 2.0, 3.0])])
+    r, v = T.state_from_elements(el_mix)
+    Jm = T.jacobian_elements_wrt_state(r, v)
+    assert np.all(np.isfinite(Jm[0])) and np.all(np.isnan(Jm[1]))
+
+
+def test_magnitude_rejects_position_vector():
+    """WP2 review regression: r_helio is a DISTANCE, not a position vector."""
+    r_vec = np.array([1.0, 2.0, 3.0])
+    with pytest.raises(ValueError, match="DISTANCE"):
+        T.absolute_magnitude(20.0, 1.5, r_vec, 0.1)
+    with pytest.raises(ValueError, match="DISTANCE"):
+        T.apparent_magnitude(15.0, 1.5, r_vec, 0.1)
+
+    # Batched form too.
+    with pytest.raises(ValueError, match="DISTANCE"):
+        T.absolute_magnitude(np.full(4, 20.0), np.full(4, 1.5), np.zeros((4, 3)), np.zeros(4))
+
+    # The correct call still works, and matches the intended value.
+    r_scalar = float(np.linalg.norm(r_vec))
+    H = T.absolute_magnitude(20.0, 1.5, r_scalar, 0.1)
+    assert np.ndim(H) == 0 and np.isfinite(H)
+
+    # Legitimate broadcasts are unaffected: scalar V with batched geometry.
+    n = 5
+    out = T.absolute_magnitude(20.0, np.full(n, 1.5), np.full(n, 2.4), np.full(n, 0.1))
+    assert out.shape == (n,)
+
+
 def test_jacobian_elements_state_is_true_inverse():
     """The two analytic Jacobians are exact matrix inverses of one another."""
     rng = np.random.default_rng(SEED + 12)
@@ -841,6 +963,81 @@ def test_jacobian_elements_state_is_true_inverse():
     cond = np.linalg.cond(A)
     assert np.all(resid < 1e-9 * np.maximum(cond, 1.0)), np.max(resid / cond)
     assert np.max(resid) < 1e-6, np.max(resid)
+
+
+def _exact_ranging_det(el, obs):
+    """Closed-form |det d(a,e,i,Omega,omega,M)/d(A, rho, rho_dot)|.
+
+    Independent of every forward map in `transforms`, derived via Delaunay
+    variables (L, G, H, l, g, h), which are canonically conjugate to (r, v) so
+    that |det d(Delaunay)/d(r, v)| = 1 exactly.  With
+    L = sqrt(mu a), G = L sqrt(1-e^2), H = G cos i and (l, g, h) = (M, omega,
+    Omega), the triangular block gives
+
+        |det d(L,G,H)/d(a,e,i)| = mu^{3/2} sqrt(a) e sin(i) / 2
+
+    hence |det d(E)/d(r, v)| = 2 / (mu^{3/2} sqrt(a) e sin i).  The observable
+    block contributes |det d(r, v)/d(A, rho, rho_dot)| = rho^4 cos^2(dec)
+    (rho^2 from the two position rows that carry rho * du/dra, rho * du/ddec,
+    rho^2 again from the matching velocity rows, and cos^2(dec) = |du/dra|^2
+    from the non-orthonormal tangent basis), and the frame rotation is
+    orthogonal.  So
+
+        |det| = rho^4 cos^2(dec) * 2 / (mu^{3/2} sqrt(a) e sin i).
+
+    This pins the CONVENTIONS, the COMPOSITION and the rho^4 cos^2(dec) scaling
+    at once, without reusing any of the module's own derivatives.
+    """
+    a, e, i = el[..., 0], el[..., 1], el[..., 2]
+    return (
+        obs["rho"] ** 4
+        * np.cos(obs["dec"]) ** 2
+        * 2.0
+        / (MU_SUN**1.5 * np.sqrt(a) * e * np.sin(i))
+    )
+
+
+def test_ranging_jacobian_det_exact_closed_form():
+    """The determinant against an exact, FD-free closed form (see helper).
+
+    A large sweep is affordable because no finite differencing is involved.
+    Excluded: sin(i) < 0.02, |dec| > 85 deg, rho < 0.05 AU (module docstring);
+    e is bounded away from 0 by the sampler.
+    """
+    rng = np.random.default_rng(SEED + 20)
+    n = 8000
+    el = _sample_elements(n, rng, regime="mixed")
+    R, V = _fake_observer(n, rng)
+    obs = T.observables_from_elements(el, np.full(n, 15.0), R, V)
+
+    keep = (
+        (np.sin(el[:, 2]) > 0.02)
+        & (np.abs(obs["dec"]) < math.radians(85.0))
+        & (obs["rho"] > 0.05)
+    )
+    assert keep.sum() > 0.6 * n
+
+    det = T.ranging_jacobian_det(
+        obs["ra"], obs["dec"], obs["ra_rate"], obs["dec_rate"], obs["rho"], obs["rho_dot"], R, V
+    )
+    exact = _exact_ranging_det(el, obs)
+    rel = np.abs(det[keep] / exact[keep] - 1.0)
+    print(f"\n  |det| vs exact Delaunay form: n={keep.sum()} median {np.median(rel):.2e} max {np.max(rel):.2e}")
+    assert np.allclose(det[keep], exact[keep], rtol=1e-9)
+
+    # The (a, e) -> (q, e) reparameterization is the same closed form times (1-e).
+    det_q = T.ranging_jacobian_det(
+        obs["ra"],
+        obs["dec"],
+        obs["ra_rate"],
+        obs["dec_rate"],
+        obs["rho"],
+        obs["rho_dot"],
+        R,
+        V,
+        parameterization="qei",
+    )
+    assert np.allclose(det_q[keep], exact[keep] * (1.0 - el[keep, 1]), rtol=1e-9)
 
 
 def test_ranging_jacobian_det_vs_fd():
@@ -883,6 +1080,9 @@ def test_ranging_jacobian_det_vs_fd():
     assert np.all(det_aei[keep] > 0.0)
     # The reparameterization factor is exactly (1 - e).
     assert np.allclose(det_qei[keep], det_aei[keep] * (1.0 - el[keep, 1]), rtol=1e-12)
+    # ... and the closed form below must hold here too.
+    exact = _exact_ranging_det(el, obs)
+    assert np.allclose(det_aei[keep], exact[keep], rtol=1e-9)
 
     worst_aei = 0.0
     worst_qei = 0.0
