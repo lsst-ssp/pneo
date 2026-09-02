@@ -1,5 +1,7 @@
 # digest42
 
+[![CI](https://github.com/mjuric/digest42/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mjuric/digest42/actions/workflows/ci.yml)
+
 A principled Bayesian classifier for asteroid tracklets: given a single tracklet — sky
 position, rates of motion, and apparent magnitude — compute a calibrated posterior
 probability that the object is a near-Earth object (NEO) rather than a member of any other

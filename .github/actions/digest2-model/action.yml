@@ -1,0 +1,77 @@
+name: digest2 population model
+description: >
+  Put data/digest2.model.csv in place: restore it from the Actions cache keyed on
+  the sha256 pinned in scripts/fetch_digest2_model.py, or download it with that
+  script, then verify what we ended up with.
+
+outputs:
+  sha256-pinned:
+    description: The sha256 pinned in scripts/fetch_digest2_model.py.
+    value: ${{ steps.pin.outputs.sha256 }}
+  sha256-actual:
+    description: The sha256 of the file that is now in data/.
+    value: ${{ steps.verify.outputs.sha256 }}
+  matches-pin:
+    description: '"true" when the file matches the pinned sha256.'
+    value: ${{ steps.verify.outputs.matches }}
+
+runs:
+  using: composite
+  steps:
+    # The cache key is the pinned sha itself, so bumping KNOWN_SHA256 after an
+    # upstream model refresh invalidates the cache automatically.
+    - name: Read the pinned model sha256
+      id: pin
+      shell: bash
+      run: |
+        set -euo pipefail
+        sha="$(grep -oE '[0-9a-f]{64}' scripts/fetch_digest2_model.py | head -n1)"
+        if [ -z "$sha" ]; then
+          echo "::error file=scripts/fetch_digest2_model.py::no pinned sha256 found"
+          exit 1
+        fi
+        echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+        echo "pinned sha256: $sha"
+
+    - name: Restore the cached model
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: data/digest2.model.csv
+        key: digest2-model-${{ steps.pin.outputs.sha256 }}
+
+    # Network is expected here; the script checks the CSV header and reports the
+    # sha of what it got (a sha change is a warning upstream, not an error).
+    - name: Fetch the model (cache miss)
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: python scripts/fetch_digest2_model.py
+
+    - name: Verify the model
+      id: verify
+      shell: bash
+      run: |
+        set -euo pipefail
+        f=data/digest2.model.csv
+        test -s "$f"
+        sha="$(sha256sum "$f" | cut -d' ' -f1)"
+        head -n1 "$f" | grep -q '^Model,Class,Q,e,i,H6,H8,H10' \
+          || { echo "::error file=$f::unexpected CSV header: $(head -c 80 "$f")"; exit 1; }
+        echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+        if [ "$sha" = "${{ steps.pin.outputs.sha256 }}" ]; then
+          echo "matches=true" >> "$GITHUB_OUTPUT"
+          echo "$f: $(wc -c <"$f") bytes, sha256 $sha (matches the pin)"
+        else
+          echo "matches=false" >> "$GITHUB_OUTPUT"
+          echo "::warning file=scripts/fetch_digest2_model.py::digest2 model sha256 is $sha but KNOWN_SHA256 pins ${{ steps.pin.outputs.sha256 }} - the MPC probably refreshed the model; the format check still passed. Update the pin (and expect population-model test numbers to move)."
+        fi
+
+    # Only cache a file that matches the pin, so the key never names content it
+    # does not describe.  A refreshed upstream model is re-downloaded every run
+    # until the pin is updated (~4 MB, under a second).
+    - name: Save the model to the cache
+      if: steps.restore.outputs.cache-hit != 'true' && steps.verify.outputs.matches == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: data/digest2.model.csv
+        key: digest2-model-${{ steps.pin.outputs.sha256 }}

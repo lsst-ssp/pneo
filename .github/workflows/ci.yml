@@ -1,0 +1,214 @@
+name: CI
+
+# Two things are tested, in parallel jobs:
+#
+#   * `pytest` on the stock install -- no Rust extension present, so
+#     `digest42.classifier` runs its numpy reference implementation.  This is
+#     what `pip install digest42` gives a user, and it is the configuration in
+#     which `backend="auto"` must degrade to "python" rather than fail.
+#   * `cargo test` plus `pytest` with the extension built, where
+#     `DIGEST42_BACKEND=rust` routes every classify call through the kernel and
+#     tests/test_backend_parity.py cross-checks the two implementations against
+#     each other (that file clears the env var itself and drives both backends
+#     explicitly, so it is a real A/B even inside the rust job).
+#
+# `DIGEST42_BACKEND=auto` is not run as a third mode: with the extension built
+# it resolves to "rust" and with it absent to "python", so the two jobs below
+# already cover both of its outcomes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # matplotlib is a diagnostics-only dependency and several tests render
+  # figures; there is no display on a runner.
+  MPLBACKEND: Agg
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Reference (numpy) backend, no compiled extension.
+  # 3.11 is the floor declared in pyproject.toml; 3.13 is what development
+  # happens on.  Add versions to the matrix to widen the range.
+  # ---------------------------------------------------------------------------
+  python-backend:
+    name: pytest (numpy reference, py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install digest42 (editable, dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # CI-only, not a project dependency: a few statistical tests are guarded
+      # with pytest.importorskip("scipy.stats") and would never run otherwise
+      # (+2 tests, no measurable time).  Drop this step to test exactly the
+      # declared dev extras.
+      - name: Install scipy (CI-only; un-skips the statistical tests)
+        run: python -m pip install scipy
+
+      - name: Put the digest2 population model in place
+        uses: ./.github/actions/digest2-model
+
+      - name: Report the environment
+        run: |
+          python - <<'PY'
+          import sys, numpy, astropy, matplotlib
+          from digest42.attributable import ephemeris_in_use
+          from digest42.backend import core_available, resolve_backend
+          print(sys.version)
+          for m in (numpy, astropy, matplotlib):
+              print(f"{m.__name__:12s} {m.__version__}")
+          print("ephemeris   ", ephemeris_in_use())
+          print("core_available", core_available())
+          # The whole point of this job: no extension, and the classifier says
+          # so rather than falling over.
+          assert not core_available(), "a digest42._core extension is present in the no-extension job"
+          assert resolve_backend("auto") == "python"
+          assert resolve_backend() == "python"   # DIGEST42_BACKEND=python
+          PY
+        env:
+          DIGEST42_BACKEND: python
+
+      - name: pytest (DIGEST42_BACKEND=python)
+        env:
+          DIGEST42_BACKEND: python
+        run: python -m pytest -q -rs --durations=15 --color=yes
+
+  # ---------------------------------------------------------------------------
+  # Rust kernel: build it, run the in-crate tests, then run the whole Python
+  # suite through it.  Python 3.11 here on purpose -- the extension is built
+  # against the stable ABI (abi3-py311), so this also checks that floor claim.
+  # ---------------------------------------------------------------------------
+  rust-backend:
+    name: cargo test + pytest (rust kernel, py3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      # Deliberately NOT setting CARGO_TARGET_DIR: rust/build.sh looks for the
+      # library at rust/target/<profile>/libdigest42_core.so, i.e. cargo's
+      # default location for that manifest.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Pinned to the commit the `stable` branch pointed at on 2026-08-05; the
+      # action itself just drives rustup, and installs whatever rustc is stable
+      # at run time.
+      - name: Install the Rust stable toolchain
+        id: rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+
+      - name: Cache the cargo registry and build directory
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          # Cargo.lock is committed, so the dependency set is exact; the rustc
+          # cachekey keeps a compiler upgrade from restoring artifacts cargo
+          # would only throw away.  The key intentionally does not depend on
+          # rust/src, so the cache is written once per (rustc, lockfile) and
+          # only the crate itself is recompiled after a source change (~110 MB
+          # of dependency artifacts, which is the part worth caching).
+          key: cargo-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-
+            cargo-${{ runner.os }}-
+
+      - name: Install digest42 (editable, dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # CI-only, see the note in the python-backend job.
+      - name: Install scipy (CI-only; un-skips the statistical tests)
+        run: python -m pip install scipy
+
+      - name: Put the digest2 population model in place
+        uses: ./.github/actions/digest2-model
+
+      # Read-only use of rust/: build.sh does `cargo build --release` and
+      # installs rust/target/release/libdigest42_core.so as
+      # src/digest42/_core.abi3.so, which is the import location of the
+      # editable install.  It ends by importing the module, so a broken build
+      # or a wrong path fails here.  Invoked as `bash rust/build.sh` rather than
+      # `rust/build.sh` so the step does not depend on the executable bit
+      # surviving in the git index; the script is identical either way.
+      - name: Build the Rust kernel (rust/build.sh)
+        run: bash rust/build.sh
+
+      - name: cargo test --release
+        working-directory: rust
+        run: cargo test --release
+
+      - name: Report the environment
+        env:
+          DIGEST42_BACKEND: rust
+        run: |
+          python - <<'PY'
+          import sys, numpy, astropy, matplotlib
+          import digest42._core as core
+          from digest42.attributable import ephemeris_in_use
+          from digest42.backend import core_available, resolve_backend
+          print(sys.version)
+          for m in (numpy, astropy, matplotlib):
+              print(f"{m.__name__:12s} {m.__version__}")
+          print("ephemeris   ", ephemeris_in_use())
+          print("core        ", core.__version__, "COND_MAX =", core.COND_MAX)
+          # Guard against a silent fallback: if this job ran the reference
+          # implementation it would pass while testing nothing new.
+          assert core_available(), "digest42._core did not import"
+          assert resolve_backend() == "rust"
+          assert resolve_backend("auto") == "rust"
+          PY
+
+      - name: pytest (DIGEST42_BACKEND=rust)
+        env:
+          DIGEST42_BACKEND: rust
+        run: python -m pytest -q -rs --durations=15 --color=yes
+
+  # ---------------------------------------------------------------------------
+  # No lint job on purpose.  As of this workflow the repository carries no
+  # ruff/black/flake8/mypy configuration (nothing in pyproject.toml, no
+  # .ruff.toml / setup.cfg / .flake8 / .pre-commit-config.yaml, and no
+  # rustfmt.toml or clippy config under rust/), so a style job would be
+  # inventing a standard rather than enforcing one.  Add the config first, then
+  # a job here.
+  # ---------------------------------------------------------------------------
