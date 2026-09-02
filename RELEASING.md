@@ -288,15 +288,13 @@ Not blockers for publishing, but each one is visible to a PyPI user:
   license *text* ships in the sdist or the wheels. Adding `LICENSE` at the root
   fixes both automatically — setuptools and maturin both pick up the default
   `license-files` globs — and requires no packaging change.
-- **A pip-installed user has no way to get the population model.** The wheels
-  and sdist deliberately do not ship `data/digest2.model.csv` (~4 MB of MPC
-  data, fetched at use time, not ours to redistribute), and
-  `scripts/fetch_digest2_model.py` is only in the sdist, where it still works
-  because it resolves `data/` relative to itself. From an installed wheel there
-  is nothing to run. The fix is a console entry point (e.g.
-  `digest42-fetch-model = digest42.model_fetch:main`) or, at minimum, the URL
-  and the expected sha256 in the README next to an install section.
-- **`README.md` has no installation section.** It is the PyPI landing page.
-  Worth saying there, in three lines, that a wheel carries the Rust kernel, that
+- ~~**A pip-installed user has no way to get the population model.**~~ Closed:
+  the `digest42-fetch-model` console script (and `digest42 fetch-model`
+  subcommand) ships in both artifacts; the wheels and sdist still deliberately
+  do not carry `data/digest2.model.csv` itself (~4 MB of MPC data, fetched at
+  use time, not ours to redistribute).
+- ~~**`README.md` has no installation section.**~~ Closed: the README carries
+  an Installation section and a Command line section (it is the PyPI landing
+  page). Original note, for context: worth saying that a wheel carries the Rust kernel, that
   other platforms get the numpy reference from the sdist, and how to check which
   one you have (`digest42.backend.core_available()`).

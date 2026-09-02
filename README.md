@@ -48,7 +48,8 @@ res.plot_posterior_map()   # (rho, rho_dot) diagnostic
 
 ```bash
 pip install digest42            # wheels: linux x86_64, macOS arm64, Windows x64 (CPython >= 3.11)
-digest42-fetch-model            # downloads the MPC digest2 population model (~4 MB) into ./data/
+digest42 fetch-model            # the MPC digest2 population model (~4 MB) -> ./data/
+digest42 fetch-obscodes         # the MPC observatory-code table -> ./data/
 ```
 
 Wheels ship the Rust-accelerated kernel (`backend="auto"` uses it automatically). On
@@ -57,6 +58,72 @@ package — same results via the numpy reference implementation, ~40× slower; b
 extension later with `rust/build.sh` (needs cargo). From a source checkout:
 `pip install -e ".[dev]" && python scripts/fetch_digest2_model.py`. See
 [RELEASING.md](RELEASING.md) for the release process.
+
+## Command line
+
+`digest42 score` is the drop-in place to start if you already run digest2 on an
+observation file. It ingests **ADES PSV** or **MPC 80-column** astrometry
+(auto-detected from content), fits one attributable per object, and writes one row
+per tracklet:
+
+```console
+$ digest42 score neocp.psv
+object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
+T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
+T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      fully_truncated_flagged
+T000003    5      1.3333  2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
+T000004    1                                        X05                                single_detection
+```
+
+Columns are tab-separated (`--format csv|json`; JSON emits every field, one strict
+RFC-8259 object per line) and a missing value is empty. `p_neo` is a **calibrated
+posterior**, not a digest2 score — it can be thresholded against a contamination
+budget. `status` says how each row was arrived at: `ok` is a likelihood-based
+posterior, `fully_truncated_flagged` is the D-19 triage policy (`p_neo = 1.0`
+*assigned*, `log_lr = nan`, because the whole admissible region is fainter than the
+population model's H support), and an ingestion failure names its own cause. Any
+calibration statistic must use `status == ok` only.
+
+Photometry uses digest2's own band→V offset table, entry for entry, with **one
+deliberate divergence** [D-20]: an MPC 80-column record carrying a magnitude but a
+*blank* band is converted as V, where digest2's 80-column reader applies its −0.8
+unknown-band fallback — so digest42 reads 0.80 mag brighter there. A blank band in
+pre-ADES astrometry is an unfiltered magnitude, and −0.8 is digest2's crudest
+fallback, applied only because a different parser ran; digest42's ADES and
+80-column paths agree with each other instead. Affected records are counted and
+reported on stderr, so the divergence is never silent.
+
+Scoring defaults are the D-18/D-19 operational configuration (`All` variant,
+`h_extend_to = 30`, the 1200×50 grid, `backend=auto`); `--variant`,
+`--h-extend-to`, `--h-interpolation`, `--n-rho`/`--n-rhodot`,
+`--rho-min`/`--rho-max`, `--backend` and `-G` override each. `--workers` defaults
+to all cores and maps onto whichever backend resolves: one batched
+`classify_many(n_threads=N)` call on the Rust kernel, a multiprocessing pool over
+tracklets on the numpy reference. Ingestion and scoring degrade **per tracklet** —
+one bad object is one failure row plus a line on stderr, never a lost run (a
+batched kernel call that fails as a unit is re-scored one tracklet at a time) — and
+stdout carries nothing but data, so `digest42 score obs.psv > scores.tsv` is clean.
+`digest42 fetch-model` is the same downloader as the `digest42-fetch-model` script.
+
+**Observatory codes.** Anything outside the built-in 14-code table needs the MPC
+observatory-code page; `digest42 fetch-obscodes` downloads it to
+`./data/ObsCodesF.html`, where `digest42 score` looks by default (`--obscodes PATH`
+or `$DIGEST42_OBSCODES` to point elsewhere). Scoring itself never touches the
+network. An unknown code falls back to the **geocentre** with a warning, and that
+is not cosmetic: scoring the pilot's 499 real tracklets with and without the table,
+106 fell back and their P(NEO) moved by up to **0.169** (F52: 0.258 → 0.427; median
+8.5×10⁻⁴), while every correctly-placed row was bit-identical. The run summary
+shouts if more than 10% of a run fell back.
+
+**Measured on the WP8 pilot's 499 real MPC NEOCP discovery tracklets** (with
+`--obscodes`): 6.1 s wall on the default grid (Rust kernel, 8 threads), all 499
+scored, and `p_neo` reproduces the pilot's own D-14-clamped scores with **median
+|Δ| = 2×10⁻¹⁹ — i.e. exactly zero, 245 of 499 bit-identical — p75 4×10⁻¹⁰ and a
+maximum of 8.6×10⁻⁶**, which is D-19's published extended-vs-clamped agreement,
+reproduced end to end through the CLI.
+
+`digest42 score --help` is self-contained; the ingestion machinery is also a public
+API (`digest42.ingest`).
 
 ## Documentation
 

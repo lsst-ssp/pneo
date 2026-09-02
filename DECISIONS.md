@@ -394,3 +394,40 @@ pair. D-17/D-18 erratum item 5 ("pchip inherits D-4's 0/0 failure"; "pchip canno
 the NEOCP operational configuration") → superseded: extension+pchip composes and is
 operationally eligible; there is no 0/0 nan any more for genuinely fully-truncated
 tracklets (policy) and the extension covers the measured H range.
+
+## D-20: The digest42 CLI (2026-09-02)
+
+**Decision.** The wheel ships a `digest42` console entry (stdlib argparse only — no CLI
+dependencies; maintainer constraint) with `score` (observation files in, one row per
+tracklet out), `fetch-model`, and `fetch-obscodes`. Scoring defaults are the D-18/D-19
+**operational** configuration (All variant, h_extend_to = 30, h_interpolation none,
+(1200, 50) grid, backend auto, triage policy active and visible in the status column) —
+not the library defaults. `--workers` defaults to all cores (maintainer decision):
+one batched rayon call on the Rust backend, a multiprocessing pool with per-worker
+model loading on the reference. Failure degrades per tracklet on every path; stdout
+carries only data; exit codes 0 (≥1 scored) / 1 (nothing scored) / 2 (configuration).
+Ingestion (`digest42.ingest`, also public API) is the NEOCP pilot's machinery promoted
+into the package, equivalence-tested against the pilot's 499 stored real tracklets.
+
+**Deliberate divergences from digest2's ingestion, recorded rather than hidden:**
+1. *Blank band on MPC 80-column records* → treated as V (offset 0.0), where digest2
+   applies its −0.8 unknown-band fallback — a 0.8 mag difference. digest42's choice is
+   the better default (V is the declared standardization target, D-5; −0.8 is digest2's
+   crudest path); the divergence is stated in the docstrings and --help, and counted on
+   stderr per run. The band-offset *table* itself is digest2's verbatim (verified
+   entry-by-entry), plus the two-character ADES aliases digest2 lacks.
+2. *note2 filter*: digest2's 80-col parser accepts only note2 ∈ {C, S, B}; digest42
+   accepts everything except space/roving/radar record types (skipped and counted).
+3. *Tracklet selection*: earliest same-night same-station set (deterministic from the
+   file alone), where the pilot used the externally-known discovery station.
+4. *Packed MPC designations are not unpacked* (grouping-only risk; documented).
+
+**Rationale.** digest2's audience is command-line users; before the CLI, the wheel
+offered them nothing. The end-to-end CLI reproduces the pilot's real-data scores
+(median |Δp| ~ 0, max 8.6×10⁻⁶ vs the clamped reference — D-19's published
+extended-vs-clamped agreement) and scores the 499-tracklet pilot sample in ~6.5 s.
+Known operational hazard, mitigated: stations outside the built-in 14-code table fall
+back to the geocentre (up to ~0.13 in p_neo for survey stations) — mitigations are the
+local obscodes table (`--obscodes` / `$DIGEST42_OBSCODES` / `./data/ObsCodesF.html`,
+fetched once via `digest42 fetch-obscodes`), per-code warnings, `obscode_source` in the
+JSON output, and a run-level warning when >10% of tracklets used the fallback.
