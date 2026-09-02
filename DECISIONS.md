@@ -262,3 +262,47 @@ tested (py3.13 on the cp311 wheel), sdist round-trip through maturin, twine stri
 source install and hard-fails uncovered platforms); pure-Python-only package (rejected:
 shipping the kernel is the point); TestPyPI staging (removed at maintainer request —
 workflow_dispatch rehearsal covers the build side).
+
+## D-17: Mass-conserving smooth-in-H density mode; grid unchanged (2026-09-02)
+
+**Decision.** `Digest2Histogram(h_interpolation="pchip")` reconstructs each (q,e,i)
+cell's H density as the derivative of a monotone (Fritsch–Carlson) piecewise cubic
+through the cumulative counts — exactly mass-conserving per bin (2e-15), non-negative,
+continuous in H, zero outside support, sampleable (inverse-CDF), gate-eligible (PASSED
+at N=2e4: ĉ = 0.958 [0.670, 1.370]), bit-identical between backends, mutually exclusive
+with the D-14 clamp. Default remains "none" (the D-10 same-inputs experiment). The
+production grid stays (1200, 50).
+
+**Rationale — including the honest negative.** Adopted as the more physical prior (the
+staircase is a binning artifact, not sky structure — maintainer's diagnosis). The
+performance hypothesis behind it did NOT survive measurement: at (1200,50) the H
+staircase is a minority error term whose cost largely cancels in the posterior ratio
+(mid-p p90 |Δp| improves 2%; the HPD estimator gap did not shrink: 0.000447 vs
+0.000358; DESIGN §2.5's 3.5e-3 figure is a mid-p statistic). Neither grid axis
+dominates any more at (1200,50). Mode change on the gate catalogue: two-sided score
+shifts (Spearman 0.991), ΔAUC +0.0003, calibration absorbed. Cost: +21–28% per-node
+(cache footprint, not flops); 2.2 MB coefficients.
+
+**Alternatives.** H-bin-edge-aware ρ node placement (superseded — targeted the same
+minority term with more machinery); multidimensional reconstruction in (e, i) with
+physical boundary behavior ∝ e, ∝ sin i (the 1/(e sin i) fix; deferred).
+
+## D-18: Operational findings from the real-data NEOCP pilot (2026-09-02)
+
+**Decision.** For NEOCP-like operation: (a) use the **All** variant (measured on 499
+real labeled NEOCP tracklets: ΔAUC(All−Unk) = +0.0104 [+0.0039, +0.0187]; the model
+file's "known" catalogue is frozen at 2011, so Unk inflates P(NEO) for belt-like
+tracklets); (b) use the **D-14 clamped pair** — 2.2% of real tracklets (100% of them
+true NEOs; fast, faint, q < 1 AU) have their ENTIRE admissible region above H = 25.5
+and score 0/0 under D-4 truncation; the clamp recovers all of them at median |Δp| 2e-6
+elsewhere. The real fix is a v1 model whose H support reaches what surveys discover.
+
+**Context.** Pilot headline: calibration survives genuine prior mismatch (pred/obs 1.01
+vs digest2's 1.38; ECE 2.2e-2 vs 2.3e-1) on a digest2-censored sample — censoring is a
+selection on observables, which cancels per DESIGN §2.4, so calibration is testable
+where ranking is not. Only 5/499 real tracklets are "clean" per §2.6(b) (vs 22%
+synthetic). The pilot also found the auc_bootstrap stratified-resampling bug (negative
+indices addressed the positive block when n_pos ≥ n_neg); fixed, regression-tested, and
+all published WP7 CIs regenerated — point estimates unchanged, CIs widened (clamped
+full-set ΔAUC now [+0.0015, +0.0253], P = 0.010; enriched full-set +0.0140
+[+0.0066, +0.0222] is the strongest ranking evidence).
