@@ -241,8 +241,15 @@ consistent with zero, zero threshold crossings on 2×10⁴, per-tracklet score s
 > 0.01 for only 1% of tracklets (max 0.024 — faint, fast, mid-p). Rate errors carry
 100.0% of the induced variance, as expected above. **Conclusion: covariance
 marginalization is not urgent for 45-minute Rubin arcs; the binding variable is arc
-length** (rate error ∝ 1/dt: ×3 at 15 min, ×9 at 5 min — untested regimes). Photometric
-noise and prior mismatch (§4.3) are separate, larger questions.
+length.** The follow-up sweep
+([validation/ASTROMETRIC_NOISE_ARCLENGTH.md](validation/ASTROMETRIC_NOISE_ARCLENGTH.md))
+measured where it breaks: **calibration fails at dt = 5 min** (Z_tot = −5.6,
+ĉ = 0.32, contamination 6.3% → 23.8% at the fixed cut — slow movers acquire
+manufactured rate), **10 min is marginal** (1.3× clear of the criterion), and
+**15 min is the shortest arc with comfortable margin** — the operational cadence
+requirement for v0 without covariance marginalization. Score scatter scales as
+dt^−0.82 (median; −1.0 at p99 — the histogram's staircase response damps the typical
+tracklet). Photometric noise and prior mismatch (§4.3) are separate, larger questions.
 
 ## 3. Architecture
 
