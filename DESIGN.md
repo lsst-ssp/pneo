@@ -231,7 +231,22 @@ single top H bin $[24, 25.5)$ versus 1.4% of the other component's, so the faint
 mixture ratio is ~40× more sensitive per unit mass to the H boundary on the NEO side.
 Validation must therefore flag, per tracklet, (a) posterior mass in
 $\{q > 1.3,\, H > H_{\max}^{\rm model}\}$ and (b) the admissible-region measure with
-implied $H > 25.5$ (nodes both components zero out purely by boundary) (§4).
+implied $H$ above the support end (nodes both components zero out purely by boundary;
+the diagnostic is support-relative, not hardcoded to 25.5) (§4).
+
+**Finite extension and the triage policy (D-19, 2026-09-02).** Real NEOCP data made the
+wall operational: 2.2% of real discovery tracklets — all true NEOs — had their *entire*
+admissible region above H = 25.5 and scored 0/0. Two remedies, composable with D-17
+pchip and gate-eligible (unlike the D-14 clamp, which survives only as the
+digest2-emulation mode): (1) `h_extend_to = 30` extends the support with the flat
+continuation of the top bin (normalizable; clamp-equivalent scoring below the wall;
+default 30 = the validated reach — see D-19 for why not 34); (2) tracklets whose finite-H admissible measure still lies ≥95% at/above the
+(possibly extended) support end — a threshold sitting in a measured total-separation
+gap (wall tracklets ≥ 0.986; false-positive classes exactly 0) — are assigned
+**p_neo = 1.0 by explicit triage policy** (status-flagged, log_lr = nan, excluded from
+gate reliability inputs — it is an operational assignment, not a posterior; empirical
+basis 11/11). The mechanism-gated trigger matters: both-Λ-zero *inside* the support
+(bright/slow objects in empty model cells) keeps returning nan.
 
 ### 2.7 Measurement uncertainty (deferred, designed-for)
 
@@ -314,7 +329,9 @@ implied $(A, V)$. On these sets:
 - **Reliability diagrams must be diagonal.** Among tracklets scored
   $P(\mathrm{NEO}) \approx p$, the true NEO fraction must be $\approx p$; any deviation is
   a bug — in the Jacobian, the measure, the admissible-region bounds, or the integration —
-  because prior mismatch is zero by construction.
+  because prior mismatch is zero by construction. (D-19 policy-assigned scores are not
+  posteriors and are excluded from the reliability inputs; the harness counts them
+  separately.)
 - **Collapse tests.** The $(\rho, \dot\rho)$ posterior maps must cover and concentrate
   around each object's true $(\rho, \dot\rho)$; the diagnostic maps are a first-class
   output.

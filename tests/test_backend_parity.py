@@ -438,10 +438,32 @@ def _compare(rp, rr, label, p_tol=P_TOL, lam_rtol=LAM_RTOL):
             assert abs(y - x) / abs(x) <= lam_rtol, (
                 f"{label}.{name}: rel = {abs(y - x) / abs(x):.3e}"
             )
+    # `log_lr` NaN-aware, and to the same relative bar as Lambda where it is
+    # an ordinary number.  A NaN log_lr is now *meaningful* (D-19: a
+    # policy-assigned score has no likelihood ratio at all), so the two
+    # backends disagreeing about it is a real defect, not a formality.
     if np.isnan(rp.log_lr):
-        assert np.isnan(rr.log_lr), label
+        assert np.isnan(rr.log_lr), (
+            f"{label}.log_lr: reference nan vs {rr.log_lr}"
+        )
     elif np.isinf(rp.log_lr):
         assert rr.log_lr == rp.log_lr, label
+    else:
+        assert np.isfinite(rr.log_lr), (
+            f"{label}.log_lr: {rp.log_lr} vs {rr.log_lr}"
+        )
+        scale = max(abs(rp.log_lr), 1.0)
+        assert abs(rr.log_lr - rp.log_lr) / scale <= lam_rtol, (
+            f"{label}.log_lr: {rp.log_lr} vs {rr.log_lr}"
+        )
+    # D-19: the status is part of the contract, and it is produced by the
+    # shared post-processing — so a mismatch means one backend fed it
+    # different mechanism evidence, which is exactly the failure the
+    # `n_h_at_or_above_support` counter exists to prevent.
+    assert rp.status == rr.status, (
+        f"{label}.status: {rp.status!r} vs {rr.status!r}"
+    )
+    assert rp.policy_assigned == rr.policy_assigned, label
 
 
 def test_cond_guard_matches_the_reference_condition_estimate(core):
@@ -1828,3 +1850,305 @@ def test_mixed_mode_artifact_is_real_and_the_guard_is_what_stops_it(
           f"(ratio {worst_artifact / worst_honest:.2f})")
 
 
+
+# ---------------------------------------------------------------------------
+# D-19 — the finite H extension across the backend boundary
+#
+# The kernel needed NO change for this mode: the H axis length and the H edge
+# array are data-driven (`rust/src/model.rs` header), and `digest42.backend`
+# hands over the already-extended table / edges / coefficients.  These tests
+# are what turns "no change needed" from an assertion into a measurement — the
+# lookup is asserted bit-equal, the end-to-end Lambdas are asserted at the
+# pre-existing D-15 level, and the mode is asserted to actually move the answer
+# so none of it is vacuous.
+# ---------------------------------------------------------------------------
+
+H_EXT = 30.0
+
+
+@pytest.fixture(scope="module")
+def ext_pair():
+    if not os.path.exists(MODEL_PATH):  # pragma: no cover
+        pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT)
+
+
+@pytest.fixture(scope="module")
+def ext_pchip_pair():
+    if not os.path.exists(MODEL_PATH):  # pragma: no cover
+        pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
+    return Digest2Histogram.neo_other_pair(
+        MODEL_PATH, h_extend_to=H_EXT, h_interpolation="pchip"
+    )
+
+
+def _ext_probes(pair, rng, n=4000):
+    """(elements3, H) probes spanning the EXTENDED H axis and beyond it."""
+    neo = pair[0]
+    h_edges = np.asarray(neo.h_edges, dtype=float)
+
+    def probes(edges, m):
+        e = np.asarray(edges, dtype=float)
+        return np.concatenate([
+            e,
+            np.nextafter(e, -np.inf),
+            np.nextafter(e, +np.inf),
+            rng.uniform(e[0] - 0.5, e[-1] + 0.5, m),
+            np.array([np.inf, -np.inf, np.nan, -0.0]),
+        ])
+
+    q = probes(Q_EDGES, n)
+    e = probes(E_EDGES, n)
+    i = probes(I_EDGES, n)
+    h = probes(h_edges, n)
+    k = min(len(q), len(e), len(i), len(h))
+    q, e, i, h = q[:k], e[:k], i[:k], h[:k]
+    for arr in (e, i, h):
+        rng.shuffle(arr)
+    # Random points almost never land in a populated cell, so add draws from
+    # the components themselves — which now include H above 25.5.
+    for comp in pair:
+        el6, hh = comp.sample(3000, rng)
+        bound = el6[:, 1] < 1.0
+        q = np.concatenate([q, (el6[:, 0] * (1.0 - el6[:, 1]))[bound]])
+        e = np.concatenate([e, el6[bound, 1]])
+        i = np.concatenate([i, el6[bound, 2]])
+        h = np.concatenate([h, hh[bound]])
+    return np.ascontiguousarray(np.stack([q, e, i], axis=-1)), \
+        np.ascontiguousarray(h)
+
+
+@pytest.mark.parametrize("which", ["hist", "pchip"])
+def test_extended_density_lookup_is_bit_exact(core, ext_pair, ext_pchip_pair,
+                                              which):
+    """Rust == Python bit for bit on the extended H axis, both H modes.
+
+    Probes hit every extended bin edge from both sides (so the new edge at 30
+    is exercised at, one ulp below and one ulp above), plus +/-inf, NaN, and
+    both out-of-support tails.
+    """
+    from digest42.backend import core_model_for
+
+    pair = ext_pair if which == "hist" else ext_pchip_pair
+    neo, other = pair
+    cm = core_model_for(neo, other)
+    assert "dims=[29, 8, 11, 19]" in repr(cm)   # the extended axis crossed over
+    rng = np.random.default_rng(190190)
+    el3, h = _ext_probes(pair, rng)
+    want_neo, want_other = neo.density(el3, h), other.density(el3, h)
+    got_neo, got_other = cm.density_at(el3, h)
+    assert np.array_equal(got_neo, want_neo)
+    assert np.array_equal(got_other, want_other)
+    # Not vacuous, and genuinely exercising the extension: in-support values
+    # above H = 25.5 must be present on both sides of the boundary.
+    above = h >= 25.5
+    assert (want_neo[above] > 0.0).any()
+    assert (want_neo > 0.0).any() and (want_neo == 0.0).any()
+    # ... and D-4 still bites at the NEW boundary, in both backends.
+    beyond = h >= H_EXT
+    assert beyond.any()
+    assert np.all(got_neo[beyond] == 0.0) and np.all(got_other[beyond] == 0.0)
+
+
+@pytest.mark.parametrize("which", ["hist", "pchip"])
+def test_extended_end_to_end_parity_on_the_gate_catalogue(
+        ext_pair, ext_pchip_pair, which):
+    """~120 real gate_v0 tracklets scored by both backends in extended mode."""
+    neo, other = ext_pair if which == "hist" else ext_pchip_pair
+    worst_p = 0.0
+    worst_lam = 0.0
+    for k, (att, R, V) in enumerate(_gate_tracklets(120, seed=909)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            rp = classify(att, neo, other, R, V, backend="python", **FAST)
+            rr = classify(att, neo, other, R, V, backend="rust", **FAST)
+        _compare(rp, rr, f"ext-{which}[{k}]")
+        assert rp.status == rr.status, f"ext-{which}[{k}] status"
+        if np.isfinite(rp.p_neo):
+            worst_p = max(worst_p, abs(rp.p_neo - rr.p_neo))
+        for name in ("lambda_neo", "lambda_other"):
+            x, y = getattr(rp, name), getattr(rr, name)
+            if x > 0.0 and np.isfinite(x):
+                worst_lam = max(worst_lam, abs(y - x) / x)
+    assert worst_p <= P_TOL
+    assert worst_lam <= LAM_RTOL
+    print(f"\n  extended({which}) parity: max |dp| = {worst_p:.3e}, "
+          f"max Lambda rel = {worst_lam:.3e}")
+
+
+@pytest.mark.parametrize("which", ["hist", "pchip"])
+def test_extended_end_to_end_parity_at_production_resolution(
+        ext_pair, ext_pchip_pair, which):
+    neo, other = ext_pair if which == "hist" else ext_pchip_pair
+    for k, (att, R, V) in enumerate(_gate_tracklets(4, seed=717)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            rp = classify(att, neo, other, R, V, backend="python", **PROD)
+            rr = classify(att, neo, other, R, V, backend="rust", **PROD)
+        _compare(rp, rr, f"ext-{which}-prod[{k}]")
+
+
+def test_extended_batch_matches_single_calls(ext_pair):
+    neo, other = ext_pair
+    cases = _gate_tracklets(24, seed=606)
+    atts = [c[0] for c in cases]
+    R = np.stack([c[1] for c in cases])
+    V = np.stack([c[2] for c in cases])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        batch = classify_many(atts, neo, other, R_obs=R, V_obs=V,
+                              backend="rust", **FAST)
+        for k, (att, r, v) in enumerate(cases):
+            one = classify(att, neo, other, r, v, backend="rust", **FAST)
+            assert batch[k].lambda_neo == one.lambda_neo, k
+            assert batch[k].lambda_other == one.lambda_other, k
+            assert batch[k].p_neo == one.p_neo or (
+                np.isnan(batch[k].p_neo) and np.isnan(one.p_neo)
+            ), k
+            assert batch[k].status == one.status, k
+
+
+def test_extended_mode_changes_the_answer(d2pair, ext_pair):
+    """Not a vacuous parity test: the extension moves Lambda on real tracklets,
+    and it moves the NEO side much harder than the other side (55.8% vs 1.4%
+    of top-bin mass, DESIGN §2.6)."""
+    moved = 0
+    ratios = []
+    for att, R, V in _gate_tracklets(30, seed=818):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            a = classify(att, *d2pair, R, V, backend="rust", **FAST)
+            b = classify(att, *ext_pair, R, V, backend="rust", **FAST)
+        # the geometry is untouched: only the density changed
+        assert a.n_nodes == b.n_nodes
+        assert a.n_masked_det == b.n_masked_det
+        assert a.n_masked_nonfinite == b.n_masked_nonfinite
+        if a.lambda_neo != b.lambda_neo or a.lambda_other != b.lambda_other:
+            moved += 1
+        # Lambda can only GROW: the extension adds non-negative density and
+        # touches nothing below 25.5 (histogram mode).
+        assert b.lambda_neo >= a.lambda_neo
+        assert b.lambda_other >= a.lambda_other
+        if a.lambda_neo > 0.0 and a.lambda_other > 0.0:
+            ratios.append((b.lambda_neo / a.lambda_neo,
+                           b.lambda_other / a.lambda_other))
+    # Measured: 18 of 30 gate_v0 tracklets move at all.  The other 12 have
+    # negligible admissible-region measure above H = 25.5, which is exactly the
+    # DESIGN §2.6 diagnostic saying the truncation never bound for them — the
+    # extension is then a no-op on their score BY CONSTRUCTION, not by
+    # accident, since nothing below 25.5 changes in histogram mode.  The bar is
+    # set below the measurement so the test asserts "the mode does something on
+    # most real tracklets" without pinning a sample-specific count.
+    assert moved >= 15, moved
+    assert ratios
+    gn = float(np.median([r[0] for r in ratios]))
+    go = float(np.median([r[1] for r in ratios]))
+    print(f"\n  extended vs truncated on 30 gate tracklets: {moved} moved; "
+          f"median Lambda_NEO x{gn:.4f}, Lambda_other x{go:.4f}")
+
+
+def test_extended_pair_mismatch_is_refused_at_every_entry_point(
+        core, d2pair, ext_pair):
+    """The D-19 flag joins the paired-mode guard, on BOTH backends.
+
+    A one-sided extension is the most violent of the three mismatches:
+    extending only the NEO side adds ~1.7x its own total mass to the numerator
+    of P(NEO) and nothing to the denominator.  All four entry points are
+    covered, including the two `backend="python"` ones — `classify` and
+    `classify_many` call `check_component_pair` themselves for exactly this
+    reason, so the guard cannot fire on one backend and not the other.
+    """
+    from digest42.backend import (ModelNotSupported, check_component_pair,
+                                  core_model_for)
+
+    hist_neo, hist_other = d2pair
+    ext_neo, ext_other = ext_pair
+    # Also a mismatch of REACH, not just on/off: 30 vs 40 have the same table
+    # shape AND (because the synthetic slab is a copy of the top slab) the same
+    # density table, so only h_extend_to itself distinguishes them.
+    far_neo, far_other = Digest2Histogram.neo_other_pair(MODEL_PATH,
+                                                         h_extend_to=40.0)
+    cases = [
+        (ext_neo, hist_other),
+        (hist_neo, ext_other),
+        (ext_neo, far_other),
+        (far_neo, ext_other),
+    ]
+    att, R, V = _gate_tracklets(1, seed=4242)[0]
+    for a, b in cases:
+        with pytest.raises(ValueError, match="h_extend_to") as ei:
+            check_component_pair(a, b)
+        assert not isinstance(ei.value, ModelNotSupported)
+        with pytest.raises(ValueError, match="h_extend_to"):
+            core_model_for(a, b)
+        for be in ("rust", "python"):
+            with pytest.raises(ValueError, match="h_extend_to"):
+                classify(att, a, b, R, V, backend=be, **FAST)
+            with pytest.raises(ValueError, match="h_extend_to"):
+                classify_many([att], a, b, R_obs=R.reshape(1, 3),
+                              V_obs=V.reshape(1, 3), backend=be, **FAST)
+    # Matched extended pairs still build and score on both backends.
+    check_component_pair(*ext_pair)
+    assert core_model_for(*ext_pair) is not None
+    check_component_pair(far_neo, far_other)
+    assert core_model_for(far_neo, far_other) is not None
+
+
+def test_two_reaches_do_not_share_a_cached_core_model(core, ext_pair):
+    """The fingerprint hazard D-19 introduces, closed and measured.
+
+    h_extend_to = 30 and = 40 produce density tables that are **bit-identical
+    and identically shaped** — the synthetic slab is a copy of the top slab —
+    and differ only in `h_edges[-1]`, which the fingerprint does not hash.
+    Without `h_extend_to` in the key the second pair would silently reuse the
+    first pair's CoreModel and score every H in [30, 40) as out of support.
+    """
+    from digest42.backend import _fingerprint, core_model_for
+
+    neo30, other30 = ext_pair
+    neo40, other40 = Digest2Histogram.neo_other_pair(MODEL_PATH,
+                                                     h_extend_to=40.0)
+    # The premise: the tables really are indistinguishable.
+    assert np.array_equal(neo30._density_table, neo40._density_table)
+    assert neo30._density_table.shape == neo40._density_table.shape
+    # ... and the fingerprints are not.
+    assert _fingerprint(neo30) != _fingerprint(neo40)
+    cm30 = core_model_for(neo30, other30)
+    cm40 = core_model_for(neo40, other40)
+    assert cm30 is not cm40
+    el3 = np.ascontiguousarray(np.array([[0.5, 0.15, 0.05]]))
+    h = np.ascontiguousarray(np.array([32.0]))
+    assert cm30.density_at(el3, h)[0][0] == 0.0
+    assert cm40.density_at(el3, h)[0][0] > 0.0
+
+
+def test_extended_and_clamped_are_mutually_exclusive_in_the_kernel_too(core):
+    """The Python constructor refuses the combination; the kernel cannot even
+    be handed it, because the clamp would then extend a constant to infinity
+    from a boundary that is itself synthetic.  Nothing in the glue can build
+    such a pair — asserted here so a future change to `_build_core_model`
+    cannot open the door quietly."""
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT,
+                                        h_top_bin_infinite=True)
+    # And a hand-built CoreModel with the clamp on an extended axis is at
+    # least self-consistent about which mode it is in: the clamp maps H above
+    # the LAST edge into the last bin, which is the synthetic one.  This is
+    # unreachable from Python and is documented as such; the assertion records
+    # what the kernel would do rather than pretending it cannot happen.
+    hist = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT)[0]
+    cm = core.CoreModel(
+        np.ascontiguousarray(hist._density_table.reshape(-1)),
+        np.ascontiguousarray(hist._density_table.reshape(-1)),
+        tuple(int(s) for s in hist.shape),
+        np.asarray(hist.q_edges, dtype=float),
+        np.asarray(hist.e_edges, dtype=float),
+        np.asarray(hist.i_edges, dtype=float),
+        np.asarray(hist.h_edges, dtype=float),
+        neo_h_top_bin_infinite=True,
+        other_h_top_bin_infinite=True,
+    )
+    el3 = np.ascontiguousarray(np.array([[0.5, 0.15, 0.05]]))
+    at_30 = cm.density_at(el3, np.ascontiguousarray(np.array([H_EXT])))[0][0]
+    inside = hist.density(el3, np.array([26.0]))[0]
+    assert at_30 == inside

@@ -283,6 +283,30 @@ pub struct Outcome {
     pub n_nodes: usize,
     pub n_masked_nonfinite: usize,
     pub n_masked_det: usize,
+    /// D-19 mechanism counter: of the `n_nodes - n_masked_nonfinite` nodes with
+    /// finite elements AND finite implied H (the ones the density was actually
+    /// evaluated at), how many have `H >= h_support_end`, where
+    /// `h_support_end` is the pair's H support end —
+    /// `max` over the two components of (`+inf` if that component clamps,
+    /// else its last H edge).
+    ///
+    /// This exists so that `classifier._posterior` can tell the *mechanism* of
+    /// a 0/0 outcome apart from its symptom, in `diagnostics=False` mode where
+    /// no per-node array is available. Zero density over a non-empty region
+    /// has several causes — the H support running out (the D-19 triage case),
+    /// implied H below zero, or simply a region the model has no objects in —
+    /// and only the first licenses the policy. Counted over `good` nodes only,
+    /// because a node with non-finite H has no position relative to the
+    /// support at all.
+    pub n_h_at_or_above_support: usize,
+    /// Total quadrature measure (sum of cell weights) over those same
+    /// finite-H nodes, and the part of it at/above the support end.  The D-19
+    /// trigger uses the RATIO of these two rather than the node counts: the
+    /// measure is what the DESIGN §2.6(b) diagnostic reports and is
+    /// independent of node placement, whereas a node-count fraction moves
+    /// with the grid.
+    pub w_h_finite: f64,
+    pub w_h_at_or_above_support: f64,
     pub diag: Option<Diagnostics>,
 }
 
@@ -343,6 +367,15 @@ pub fn classify_one(
     let mut lam_neo = Neumaier::default();
     let mut lam_other = Neumaier::default();
     let mut out = Outcome::default();
+    // D-19: the pair's H support end.  `max` of the two components, because
+    // "outside BOTH supports" needs the further of the two boundaries; a
+    // clamped component has no upper boundary at all, so the pair's is +inf
+    // and the policy can never fire on it (correctly: the clamp never runs
+    // out of model above 25.5).
+    let h_support_end = model
+        .neo
+        .h_support_end()
+        .max(model.other.h_support_end());
     let mut diag = if diagnostics {
         Some(Diagnostics::with_capacity(cfg.n_rho * cfg.n_rhodot)?)
     } else {
@@ -463,6 +496,16 @@ pub fn classify_one(
                         d.node_q.push(f64::NAN);
                     }
                     continue;
+                }
+
+                // D-19 mechanism counter.  `h_abs` is finite here (`good`), so
+                // this is a plain comparison: NaN never reaches it, and
+                // `h_support_end = +inf` (a clamped pair) makes it always
+                // false, which is the intended answer.
+                out.w_h_finite += weight;
+                if h_abs >= h_support_end {
+                    out.n_h_at_or_above_support += 1;
+                    out.w_h_at_or_above_support += weight;
                 }
 
                 // --- Jacobian (closed form) + conditioning guard ----------

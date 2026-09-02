@@ -175,6 +175,108 @@ D-14 clamp is a histogram-emulation device (it extends a *constant* past the
 support), and a smooth density that is suddenly constant beyond 25.5 is
 neither a reconstruction of the model nor an emulation of digest2.
 Constructing both together raises ``ValueError``.
+
+**Finite H extension (``h_extend_to``) [D-19].**  The D-14 clamp buys the
+NEOCP operating point (validation/NEOCP_PILOT.md: 11 of 499 real discovery
+tracklets — 100% of them true NEOs — have their *entire* admissible region at
+implied H > 25.5 and score 0/0 under D-4) at the price of a non-normalizable
+component: it is gate-ineligible, cannot be sampled, and cannot compose with
+``h_interpolation``.  ``h_extend_to`` buys the same operating point without
+paying that price.
+
+Construction, in full.  With ``h_extend_to = X > 25.5`` every (q, e, i) cell
+gains **one synthetic 19th H bin** ``[25.5, X)``, whose object count is a flat
+continuation of the top bin's per-unit-H density::
+
+    counts[..., 18] = counts[..., 17] / 1.5 * (X - 25.5)
+
+(1.5 mag is the width of the model's top bin [24, 25.5)).  The density is
+exactly zero at and above ``X`` — this is still D-4 hard truncation, just at a
+declared boundary further out; nothing is extrapolated *without* a declared
+support, and the extension has finite mass, so the component stays a
+probability distribution.  Consequences, each of which is a test:
+
+* **Exact continuity at H = 25.5.**  In histogram mode the synthetic bin's
+  entry of the density table is set to the top bin's entry *bit-for-bit*, so
+  ``density(nextafter(25.5, 0)) == density(25.5)`` exactly, cell by cell.
+  (Computing it instead as ``counts[..., 18] / (bin_volume * (2 pi)^3)`` is the
+  same number to <= 1 ulp — 3.5e-16 relative at worst over the shipped model,
+  bit-equal in 296 of the 546 non-empty NEO cells — but "to 1 ulp" is not
+  "by construction", so the table entry is copied rather than recomputed.  The
+  1-ulp residual moves to the count/density relation of that one bin, where it
+  is harmless and is asserted rather than hidden.)
+* **Everything below 25.5 is bit-identical to the unextended model** in
+  histogram mode: the first 18 volume slabs are *the same array* (the extended
+  bin-volume array is ``concatenate((BIN_VOLUME, dq de di dH_ext))``), and the
+  first 18 count slabs are the input counts, so the quotient is bit-for-bit
+  what the unextended component computes.  In **pchip** mode the identity holds
+  only for ``H < 24``: the extra cumulative knot at ``X`` turns the knot at
+  25.5 from an *end* knot into an *interior* one, which changes that knot's
+  slope and hence the cubic on ``[24, 25.5)``.  The mass in ``[24, 25.5)`` is
+  still exactly ``counts[..., 17]`` — PCHIP interpolates the cumulative count,
+  so per-bin mass conservation is structural and cannot be disturbed by adding
+  a knot — but the *shape* inside that one bin does change.  This is stated
+  because it is the one place the "nothing below 25.5 moves" claim needs a
+  qualifier.
+
+  **How big is that change?**  Measured over every populated cell at 61 H
+  samples across ``[24, 25.5)``, as ``|d_extended - d_plain|`` divided by that
+  bin's *mean* density (``count / (1.5 · dq de di (2π)³)`` — the scale-free
+  denominator, and the one the histogram mode would report):
+  median **5.4%**, p90 **15.9%**, max **93.5%** for the NEO component;
+  8.6% / 25.5% / 93.5% for "other".  Divided instead by the *pointwise*
+  unextended density the same statistic reads 5.6% / 15.7% / **2222%**, and the
+  tail is an artifact of the denominator, not of the reconstruction: it occurs
+  only where the unextended cubic's derivative is near one of its own zeros, so
+  a small absolute change is a large relative one.  Mass is exactly preserved
+  either way.  Both metrics are reported because neither alone is honest.
+* **``h_interpolation="pchip"`` composes.**  The extension is simply one more
+  cumulative knot: 20 edges, 19 knots + the ``C(0) = 0`` pin, 19 intervals.
+  What is *guaranteed* is what PCHIP always guarantees, and the guarantee does
+  not include flatness — the defined behaviour inside ``[25.5, X)`` is a
+  mass-conserving monotone cubic through the extra knot, whatever shape that
+  takes: the mass in the synthetic bin is exactly ``counts[..., 18]``, the
+  density is non-negative, and it is continuous across H = 25.5 (PCHIP is C¹,
+  so its derivative is C⁰ across every *interior* knot — and 25.5 is now
+  interior).
+
+  What actually *happens*, as a consequence of this particular extension count
+  rather than of the interpolator, is that the cubic degenerates to a straight
+  line and the reconstructed density in the extension is flat after all,
+  equal to the histogram mode's constant to floating-point noise.  The reason
+  is worth writing down because it is a one-line proof: the extension
+  interval's secant is ``[counts[17] * (w/1.5)] / w = counts[17] / 1.5``, which
+  is exactly the top bin's secant, so PCHIP's harmonic mean at the 25.5 knot
+  and its three-point end slope at the ``X`` knot both return that same value,
+  the two Hermite slopes of the interval are equal to its secant, and the
+  quadratic and cubic Hermite coefficients vanish.  Practical consequence:
+  extended+pchip and extended+histogram differ only on ``[24, 25.5)``, not
+  above it.  This is measured, not assumed
+  (``tests/test_population.py::test_extension_conserves_mass_including_the_synthetic_bin``),
+  and it is stated as a derived observation so that a future extension law
+  with a non-flat continuation does not silently break a promise this module
+  never made.
+* **Gate-eligible.**  :meth:`sample` needs no special case: the synthetic bin is
+  drawn like any other bin, with probability proportional to its count, and the
+  within-bin draw is the same uniform (histogram) or inverse-cubic (pchip) as
+  everywhere else.  This is the substantive difference from the D-14 clamp,
+  which has no generative counterpart at all.
+* **:attr:`total_count` grows, and the growth is real, normalizable mass.**
+  The NEO component's top H bin holds 55.8% of its mass (DESIGN §2.6), so at
+  the canonical ``h_extend_to = 30`` (factor ``4.5/1.5 = 3``) the NEO
+  component's total goes from 277 469 to 742 145 objects — **×2.675** — while
+  the "other" component (1.4% in its top bin) grows only ×1.042.  The mixture
+  fraction therefore moves a great deal; that is not an artifact to be
+  suppressed but the model statement being made, namely that the faint end
+  does not stop existing at H = 25.5.  It is honest mass: unlike the clamp's,
+  it integrates to a finite number, which is exactly why the extended pair can
+  be handed to the DESIGN §4.1 gate.
+
+``h_extend_to`` is mutually exclusive with ``h_top_bin_infinite`` (the two are
+alternative answers to the same problem, and stacking them would mean
+extending a constant to infinity from a boundary that was itself synthetic).
+The clamp survives **only** as the digest2-emulation mode for WP7-style
+same-inputs comparisons.
 """
 
 from __future__ import annotations
@@ -631,6 +733,124 @@ def _pchip_derivative_coeffs(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return np.stack((m0, 2.0 * c2, 3.0 * c3), axis=-1)
 
 
+#: Width of the model's top H bin, [24, 25.5) — the per-unit-H reference the
+#: finite extension continues.  Named rather than spelled 1.5 inline so that a
+#: future model file with different H partitions cannot leave a stale literal.
+_TOP_H_BIN_WIDTH = float(H_EDGES[-1] - H_EDGES[-2])
+
+
+#: Largest accepted ``h_extend_to``.  Not a physical limit — a sanity ceiling.
+#:
+#: The synthetic bin's count scales as ``(h_extend_to - 25.5) / 1.5``, so a
+#: careless value (a mistyped exponent, a value in the wrong unit) silently
+#: multiplies the NEO component's mass by that factor and, far enough out,
+#: overflows to ``inf`` and makes the component unusable in a way whose error
+#: message would point nowhere near the cause.  100 mag is ~70x the model's own
+#: H range and far beyond any survey's reach (implied H at rho_min = 0.01 AU
+#: and V = 24 is ~34), so nothing legitimate is excluded; the finiteness of the
+#: extended counts is *also* checked directly in :func:`_extend_h_axis`, so the
+#: ceiling is a better error message rather than the guarantee itself.
+H_EXTEND_TO_MAX = 100.0
+
+
+def _validated_h_extend_to(h_extend_to) -> float | None:
+    """Normalize and validate the ``h_extend_to`` knob; ``None`` passes through.
+
+    Must be a real number, finite, strictly greater than the model's H support
+    end (25.5), and at most :data:`H_EXTEND_TO_MAX`: a non-finite value would
+    be the D-14 clamp by another name (and non-normalizable), a value at or
+    below 25.5 would either be a no-op or silently *shrink* the support, and an
+    absurdly large one inflates the component's mass by the width ratio (see
+    :data:`H_EXTEND_TO_MAX`).
+    """
+    if h_extend_to is None:
+        return None
+    # A str would otherwise sail through `float()` — `h_extend_to="30"` and,
+    # worse, `h_extend_to="none"` (a plausible copy/paste from
+    # `h_interpolation`) which raises a bare ValueError from float() naming
+    # neither the parameter nor what it wanted.  Booleans are ints in Python
+    # and `h_extend_to=True` is certainly a mistake, so they go too.
+    if isinstance(h_extend_to, bool) or not isinstance(
+        h_extend_to, (int, float, np.integer, np.floating)
+    ):
+        raise ValueError(
+            f"h_extend_to must be a real number or None, got "
+            f"{type(h_extend_to).__name__} {h_extend_to!r}. It is the upper "
+            "edge of the synthetic H bin [25.5, h_extend_to) in magnitudes "
+            "(canonical value 30.0); pass None to keep the D-4 support."
+        )
+    x = float(h_extend_to)
+    top = float(H_EDGES[-1])
+    if not np.isfinite(x):
+        raise ValueError(
+            f"h_extend_to must be finite, got {h_extend_to!r}. An infinite "
+            "extension is the D-14 clamp (h_top_bin_infinite=True), which is "
+            "non-normalizable and gate-ineligible; the point of h_extend_to is "
+            "a finite, samplable support."
+        )
+    if not x > top:
+        raise ValueError(
+            f"h_extend_to must be greater than {top:g} (the model's H support "
+            f"end), got {x!r}. h_extend_to appends a synthetic H bin "
+            f"[{top:g}, h_extend_to); a value at or below {top:g} would be "
+            "empty or would shrink the support."
+        )
+    if x > H_EXTEND_TO_MAX:
+        raise ValueError(
+            f"h_extend_to = {x!r} exceeds the sanity ceiling "
+            f"{H_EXTEND_TO_MAX:g} mag. The synthetic bin's count scales as "
+            f"(h_extend_to - {top:g}) / 1.5, so this would multiply the NEO "
+            f"component's faint-end mass by {(x - top) / 1.5:.3g}x; at "
+            "V = 24 and rho_min = 0.01 AU the implied H only reaches ~34, so "
+            "a value this large is almost certainly a typo or a unit error. "
+            "See population.H_EXTEND_TO_MAX if you really mean it."
+        )
+    return x
+
+
+def _extend_h_axis(
+    counts: np.ndarray, h_extend_to: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Append the synthetic 19th H bin ``[25.5, h_extend_to)`` [D-19].
+
+    Returns ``(counts_ext, h_edges_ext, bin_volume_ext)`` with H axis length
+    ``n_h + 1``.  The synthetic bin's count is the top bin's count scaled by
+    the width ratio, i.e. a flat continuation of the top bin's per-unit-H
+    object density (module docstring).
+
+    Both returned axis arrays are built by *concatenation onto the unextended
+    arrays*, which is what makes everything below 25.5 bit-identical to the
+    unextended model rather than merely equal: the first ``n_h`` volume slabs
+    are copied, not recomputed.
+    """
+    width = float(h_extend_to) - float(H_EDGES[-1])
+    counts_ext = np.concatenate(
+        (counts, counts[..., -1:] * (width / _TOP_H_BIN_WIDTH)), axis=-1
+    )
+    # The ceiling on h_extend_to makes this unreachable for the shipped model,
+    # but the input counts are caller-supplied: a component built from cells
+    # near the float64 ceiling would overflow the width scaling and produce an
+    # `inf` density that the Rust glue would reject much later with a message
+    # about "finite and non-negative" pointing at the table rather than at the
+    # extension.  Checked here, where the cause is nameable.
+    if not np.all(np.isfinite(counts_ext[..., -1])):
+        bad = int(np.count_nonzero(~np.isfinite(counts_ext[..., -1])))
+        raise ValueError(
+            f"h_extend_to = {h_extend_to!r} overflows the synthetic bin's "
+            f"counts in {bad} cell(s): the top bin's count times "
+            f"{width / _TOP_H_BIN_WIDTH:g} is not finite. Either the input "
+            "counts are already near the float64 limit or h_extend_to is far "
+            "too large."
+        )
+    h_edges_ext = np.concatenate((H_EDGES, [float(h_extend_to)]))
+    bin_volume_ext = np.concatenate(
+        (BIN_VOLUME, (QEI_VOLUME * width)[..., None]), axis=-1
+    )
+    h_edges_ext.flags.writeable = False
+    bin_volume_ext.flags.writeable = False
+    return counts_ext, h_edges_ext, bin_volume_ext
+
+
 def _bin_index(edges: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Half-open [lo, hi) bin lookup matching digest2's ``x >= part[b]`` rule.
 
@@ -661,6 +881,26 @@ class Digest2Histogram(PopulationDensity):
     h_top_bin_infinite : whether the top H bin is treated as [24, inf)
         (digest2-emulation mode) rather than [24, 25.5) (D-4 default).
     h_interpolation : ``"none"`` or ``"pchip"`` — the H reconstruction.
+    h_extend_to : ``None``, or the upper edge of a synthetic 19th H bin
+        [25.5, h_extend_to) appended to every cell [D-19].
+    shape : the effective bin shape — ``MODEL_SHAPE`` normally,
+        ``(29, 8, 11, 19)`` in extended mode.  ``counts``, ``bin_volume`` and
+        ``h_edges`` all carry the extension.
+
+    Finite H extension (``h_extend_to``) [D-19]
+    -------------------------------------------
+    ``h_extend_to=30.0`` (the canonical value) appends one synthetic H bin
+    ``[25.5, 30.0)`` per (q, e, i) cell, holding
+    ``counts[..., 17] / 1.5 * (30.0 - 25.5)`` objects — a flat continuation of
+    the top bin's per-unit-H density, with hard zero above ``h_extend_to``.
+    Unlike the D-14 clamp this is *finite* mass, so the component remains
+    normalizable and samplable, which makes the extended pair **gate-eligible**
+    and composable with ``h_interpolation="pchip"``.  The module docstring
+    derives the guarantees (exact continuity at 25.5, sub-25.5 bit-identity and
+    its one pchip-mode qualifier, mass conservation of the synthetic bin under
+    pchip, and the size of the resulting ``total_count`` growth: x2.675 on the
+    NEO side, x1.042 on the "other" side).  Mutually exclusive with
+    ``h_top_bin_infinite``.
 
     Smooth-in-H mode (``h_interpolation="pchip"``)
     ---------------------------------------------
@@ -713,6 +953,7 @@ class Digest2Histogram(PopulationDensity):
         interpolate: bool = False,
         h_top_bin_infinite: bool = False,
         h_interpolation: str = "none",
+        h_extend_to: float | None = None,
     ):
         """Build a histogram density from absolute per-bin object counts.
 
@@ -738,16 +979,28 @@ class Digest2Histogram(PopulationDensity):
             a monotone cubic through the cell's cumulative counts — same mass
             in every H bin, continuous across interior H edges, still exactly
             0 outside [0, 25.5).  See the class and module docstrings.
+        h_extend_to : ``None`` (default) or a finite float > 25.5 [D-19].  When
+            set, one synthetic H bin ``[25.5, h_extend_to)`` is appended to
+            every (q, e, i) cell with a count that continues the top bin's
+            per-unit-H density flatly; the density is exactly 0 at and above
+            ``h_extend_to``.  The extension has finite mass, so the component
+            stays normalizable: :meth:`sample` works, the mode is
+            gate-eligible, and it composes with ``h_interpolation``.  Mutually
+            exclusive with ``h_top_bin_infinite``.
 
         Raises
         ------
         ValueError
-            for an unknown ``h_interpolation``, and for
+            for an unknown ``h_interpolation``; for
             ``h_interpolation != "none"`` together with
             ``h_top_bin_infinite=True`` (the D-14 clamp extends a *constant*
             beyond the support, which a smooth reconstruction has no analogue
             for; the combination would be neither a reconstruction of the
-            model nor an emulation of digest2).
+            model nor an emulation of digest2); for ``h_extend_to`` together
+            with ``h_top_bin_infinite=True`` (two alternative answers to the
+            same problem — the clamp survives only as the digest2-emulation
+            mode); and for an ``h_extend_to`` that is non-finite or not
+            greater than 25.5.
         """
         if interpolate:
             raise NotImplementedError(
@@ -780,6 +1033,24 @@ class Digest2Histogram(PopulationDensity):
                 "reconstruction of the model nor an emulation of digest2, "
                 "and it would be non-normalizable on top of that. Pick one."
             )
+        # Validated before the clamp cross-check so that a bad *value* is
+        # reported as a bad value rather than as a mode conflict.
+        h_extend_to = _validated_h_extend_to(h_extend_to)
+        if h_extend_to is not None and h_top_bin_infinite:
+            raise ValueError(
+                f"h_extend_to={h_extend_to!r} cannot be combined with "
+                "h_top_bin_infinite=True: they are two alternative answers to "
+                "the same problem (the D-4 H-support wall of DESIGN §2.6). The "
+                "D-14 clamp extends the top bin's constant density to H = inf, "
+                "which is non-normalizable and therefore gate-ineligible and "
+                "unsamplable; h_extend_to appends a *finite* synthetic bin "
+                "[25.5, h_extend_to) and keeps the component a probability "
+                "distribution. Stacking them would mean clamping to infinity "
+                "from a boundary that is itself synthetic. The clamp survives "
+                "only as the digest2-emulation mode for the DESIGN §4.2 "
+                "same-inputs comparison (D-14); for operational scoring use "
+                "h_extend_to (D-19). Pick one."
+            )
         counts = np.array(counts, dtype=float)   # copy: the object owns it
         if counts.shape != MODEL_SHAPE:
             raise ValueError(
@@ -790,36 +1061,66 @@ class Digest2Histogram(PopulationDensity):
         if counts.min() < 0.0:
             raise ValueError("counts must be non-negative")
 
-        self._counts = counts
         self.label = str(label)
         self.variant = str(variant)
         self.classes = str(classes)
         self.h_top_bin_infinite = bool(h_top_bin_infinite)
         self.h_interpolation = h_interpolation
+        self.h_extend_to = h_extend_to
 
         self.q_edges = Q_EDGES
         self.e_edges = E_EDGES
         self.i_edges = I_EDGES          # radians
         self.i_edges_deg = I_EDGES_DEG
-        self.h_edges = H_EDGES
-        self.bin_volume = BIN_VOLUME    # dq * de * di[rad] * dH
         self.qei_volume = QEI_VOLUME    # dq * de * di[rad]
+
+        if h_extend_to is None:
+            self.h_edges = H_EDGES
+            self.bin_volume = BIN_VOLUME    # dq * de * di[rad] * dH
+        else:
+            counts, self.h_edges, self.bin_volume = _extend_h_axis(
+                counts, h_extend_to
+            )
+        #: Effective bin shape: MODEL_SHAPE, or one more H bin when extended.
+        self.shape = tuple(int(s) for s in counts.shape)
+        self._counts = counts
 
         # Number density: counts per unit (q, e, i[rad], H) volume, further
         # divided by (2 pi)^3 so that the returned value is the full 7-D
         # density including the uniform angles (interface contract).
-        self._density_table = counts / (BIN_VOLUME * _ANGLE_VOLUME)
+        self._density_table = counts / (self.bin_volume * _ANGLE_VOLUME)
+        if h_extend_to is not None:
+            # Exact continuity at H = 25.5 *by construction*: the synthetic
+            # bin's density is the top bin's density bit-for-bit, not a value
+            # that merely rounds to it.  (Recomputing it from the synthetic
+            # count and volume agrees to <= 1 ulp — 3.5e-16 relative at worst
+            # over the shipped model — but 296 of the 546 non-empty NEO cells
+            # are the *only* ones where it comes out bit-equal, and a
+            # continuity claim that holds for 54% of cells is not a claim.
+            # The 1-ulp residual is thereby moved onto the synthetic bin's
+            # count/density relation, where it is asserted, not hidden; see
+            # tests/test_population.py.)
+            self._density_table[..., -1] = self._density_table[..., -2]
         self._total_count = float(counts.sum())
         self._cdf: np.ndarray | None = None
         #: 1 / (dq de di (2 pi)^3), the divisor the smooth-in-H mode uses.
         self._qei_inv_volume = 1.0 / (QEI_VOLUME * _ANGLE_VOLUME)
         self._h_coeffs: np.ndarray | None = None
         if h_interpolation == "pchip":
-            self._h_coeffs = self._build_h_pchip(counts)
+            self._h_coeffs = self._build_h_pchip(counts, self.h_edges)
 
     @staticmethod
-    def _build_h_pchip(counts: np.ndarray) -> np.ndarray:
-        """(29, 8, 11, 18, 3) Horner coefficients of the smooth H density.
+    def _build_h_pchip(counts: np.ndarray, h_edges: np.ndarray) -> np.ndarray:
+        """(29, 8, 11, n_h, 3) Horner coefficients of the smooth H density.
+
+        ``h_edges`` is the component's own H edge array — ``H_EDGES``, or the
+        D-19 extended one, in which case the synthetic bin is simply one more
+        cumulative knot and nothing else changes.  Per-bin mass conservation is
+        structural (the interpolant is pinned to the exact cumulative count at
+        every knot), so it covers the synthetic bin automatically; what the
+        extra knot *does* change is the slope at the 25.5 knot, which is an end
+        knot without the extension and an interior one with it — hence the
+        cubic on [24, 25.5) differs between the two (its mass does not).
 
         The knot values are the *exact* cumulative counts: the shipped model's
         cells are integers below 2^53, so ``cumsum`` in float64 is exact and
@@ -835,7 +1136,7 @@ class Digest2Histogram(PopulationDensity):
         """
         cum = np.zeros(counts.shape[:3] + (counts.shape[3] + 1,), dtype=float)
         cum[..., 1:] = np.cumsum(counts, axis=-1)
-        coeffs = _pchip_derivative_coeffs(H_EDGES, cum)
+        coeffs = _pchip_derivative_coeffs(h_edges, cum)
         inv_vol = 1.0 / (QEI_VOLUME * _ANGLE_VOLUME)
         coeffs = np.ascontiguousarray(coeffs * inv_vol[..., None, None])
         coeffs.flags.writeable = False
@@ -848,6 +1149,7 @@ class Digest2Histogram(PopulationDensity):
         cls, path: str, variant: str = "All", *,
         h_top_bin_infinite: bool = False,
         h_interpolation: str = "none",
+        h_extend_to: float | None = None,
     ) -> tuple["Digest2Histogram", "Digest2Histogram"]:
         """Load the model file and return (neo, other) components.
 
@@ -868,6 +1170,12 @@ class Digest2Histogram(PopulationDensity):
         likelihoods, so reconstructing the faint end of one and not the other
         would put a modelling artifact straight into the posterior.  The two
         modes are mutually exclusive (see the constructor).
+
+        ``h_extend_to`` [D-19] is passed to both components too, and for a
+        third instance of the same reason: extending only the NEO side would
+        add the entire faint-end continuation to the numerator of P(NEO) and
+        nothing to the denominator.  :func:`digest42.backend.check_component_pair`
+        enforces the pairing at every classify entry point.
 
         Implementation note: digest2's named classes overlap and do not cover
         the model (module docstring), so "all remaining classes" is realised
@@ -893,10 +1201,12 @@ class Digest2Histogram(PopulationDensity):
         return (
             cls(neo, "NEO", variant=variant, classes="NEO",
                 h_top_bin_infinite=h_top_bin_infinite,
-                h_interpolation=h_interpolation),
+                h_interpolation=h_interpolation,
+                h_extend_to=h_extend_to),
             cls(other, "other", variant=variant, classes="SS - NEO",
                 h_top_bin_infinite=h_top_bin_infinite,
-                h_interpolation=h_interpolation),
+                h_interpolation=h_interpolation,
+                h_extend_to=h_extend_to),
         )
 
     @classmethod
@@ -910,6 +1220,7 @@ class Digest2Histogram(PopulationDensity):
         subtract=(),
         h_top_bin_infinite: bool = False,
         h_interpolation: str = "none",
+        h_extend_to: float | None = None,
     ) -> "Digest2Histogram":
         """Aggregate named digest2 classes into one component (diagnostics).
 
@@ -920,8 +1231,9 @@ class Digest2Histogram(PopulationDensity):
 
         ``h_top_bin_infinite`` selects the digest2-emulation top H bin
         [24, inf) (comparison mode only; see the class docstring);
-        ``h_interpolation`` selects the smooth-in-H reconstruction.  The two
-        are mutually exclusive.
+        ``h_interpolation`` selects the smooth-in-H reconstruction;
+        ``h_extend_to`` appends the D-19 finite synthetic H bin.  The clamp is
+        mutually exclusive with each of the other two.
         """
         _check_variant(variant)
         tables = read_digest2_model(path)
@@ -940,7 +1252,8 @@ class Digest2Histogram(PopulationDensity):
             desc += " - " + " - ".join(subtract)
         return cls(counts, label, variant=variant, classes=desc,
                    h_top_bin_infinite=h_top_bin_infinite,
-                   h_interpolation=h_interpolation)
+                   h_interpolation=h_interpolation,
+                   h_extend_to=h_extend_to)
 
     # -- interface ---------------------------------------------------------
 
@@ -983,6 +1296,17 @@ class Digest2Histogram(PopulationDensity):
         q, e, i truncation and H < 0 are bit-identical between the two modes,
         as is every H in [0, 25.5): the clamp only ever *adds* the H >= 25.5
         branch, it never touches the in-range lookup.
+
+        With ``h_extend_to`` set [D-19] the support runs to ``h_extend_to``
+        instead of 25.5 and the density there is the top bin's per-unit-H value
+        continued flatly (histogram mode) or the monotone cubic through the
+        extra cumulative knot (pchip mode).  At and above ``h_extend_to`` the
+        result is exactly 0.0 — still D-4, at a boundary further out.  In
+        histogram mode every H below 25.5 evaluates bit-identically to the
+        unextended component, and H = 25.5 evaluates bit-identically to
+        H = nextafter(25.5, 0); in pchip mode the bit-identity holds below
+        H = 24 (see the module docstring for why [24, 25.5) moves and why its
+        mass does not).
         """
         elements3 = np.asarray(elements3, dtype=float)
         if elements3.ndim == 0 or elements3.shape[-1] != 3:
@@ -1054,6 +1378,18 @@ class Digest2Histogram(PopulationDensity):
         changes the components' relative normalization by ~2 % if it is
         silently dropped from one side only.
 
+        With ``h_extend_to`` set [D-19] there is **no special case at all**:
+        the synthetic bin ``[25.5, h_extend_to)`` participates in the bin CDF
+        like every other bin (its selection probability is its object count
+        over the total, which now includes the extension mass) and the
+        within-bin draw is the same uniform — or the same inverse-cubic under
+        ``h_interpolation="pchip"`` — as everywhere else.  That the extension
+        is samplable at all is the substantive difference from the D-14 clamp
+        and is what makes extended components **gate-eligible**.  The expected
+        fraction of draws landing above H = 25.5 is
+        ``extension mass / total_count``, which for the shipped All/NEO
+        component at ``h_extend_to=30`` is 3 x 0.5582 / 2.6747 = 62.6%.
+
         Raises NotImplementedError when ``h_top_bin_infinite=True``: a clamped
         component is not a probability distribution, so there is nothing to
         draw from (see the class docstring).
@@ -1088,7 +1424,7 @@ class Digest2Histogram(PopulationDensity):
         # which correctly skips zero-count bins.
         k = np.searchsorted(cdf, rng.random(n), side="right")
         np.clip(k, 0, cdf.size - 1, out=k)
-        iq, ie, ii, ih = np.unravel_index(k, MODEL_SHAPE)
+        iq, ie, ii, ih = np.unravel_index(k, self.shape)
 
         def _uniform_in(edges, idx):
             """Uniform in [edges[idx], edges[idx+1]), strictly half-open.
@@ -1218,6 +1554,13 @@ class Digest2Histogram(PopulationDensity):
         the DESIGN §2.6(b) "measure above H_max^model" flag, which would
         otherwise flag as truncation-exposed exactly the nodes the clamped
         component evaluates normally.
+
+        In extended mode [D-19] the H upper bound is ``h_extend_to``, for
+        exactly the same reason — and there it is a *finite* honest boundary:
+        the density really is zero above it (hard truncation, D-4, just further
+        out), so §2.6(b)'s flag keeps measuring what it is meant to measure,
+        now against the extended support.  ``self.h_edges[-1]`` already is
+        ``h_extend_to``, so no branch is needed.
         """
         h_hi = (
             float("inf") if self.h_top_bin_infinite else float(self.h_edges[-1])
@@ -1231,13 +1574,27 @@ class Digest2Histogram(PopulationDensity):
 
     @property
     def total_count(self) -> float:
-        """Total object count over the binned [0, 25.5) H range.
+        """Total object count over the component's binned H range.
 
         Equals the integral of the density over its support and the uniform
         angles in the default (D-4) mode; WP4 acceptance: reproduces the
         file's per-class totals.  Unchanged by ``h_interpolation``, and still
         the integral there — that is the point of reconstructing the
         cumulative count rather than the density (module docstring).
+
+        .. note::
+           With ``h_extend_to`` set [D-19] this **includes the synthetic bin's
+           mass**, and the increase is large: the NEO component keeps 55.8% of
+           its mass in the top H bin (DESIGN §2.6), so at the canonical
+           ``h_extend_to = 30`` its total goes 277 469 -> 742 145 (x2.675)
+           while the "other" component goes x1.042.  That is deliberate and it
+           is *real, normalizable* mass — the value is still exactly the
+           integral of the density over the declared support, so the mixture
+           fraction built from it is the extended model's own mixture fraction
+           (contrast the D-14 clamp's warning below, where no such statement
+           can be made).  Any comparison of extended and unextended totals is
+           a comparison of two different population models, which is the
+           point.
 
         .. warning::
            In digest2-emulation mode (``h_top_bin_infinite=True``) this is
@@ -1254,7 +1611,13 @@ class Digest2Histogram(PopulationDensity):
 
     @property
     def counts(self) -> np.ndarray:
-        """Read-only view of the (29, 8, 11, 18) per-bin object counts."""
+        """Read-only view of the per-bin object counts, shape :attr:`shape`.
+
+        ``(29, 8, 11, 18)`` normally; ``(29, 8, 11, 19)`` with ``h_extend_to``
+        set, the last H slab being the synthetic bin's counts [D-19].  It is
+        the counts of the model *as evaluated*, which is what every consumer
+        (the sampler, the Rust glue's table fallback, the diagnostics) needs.
+        """
         view = self._counts.view()
         view.flags.writeable = False
         return view
@@ -1292,7 +1655,11 @@ class Digest2Histogram(PopulationDensity):
 
         ``in_support`` follows ``h_top_bin_infinite``: in digest2-emulation
         mode H >= 25.5 is *in* support and carries ``ih = 17``, matching what
-        :meth:`density` evaluates there.
+        :meth:`density` evaluates there.  It likewise follows ``h_extend_to``
+        [D-19]: with the extension on, H in [25.5, h_extend_to) is in support
+        and carries ``ih = 18`` (the synthetic bin), and H >= h_extend_to is
+        out — again matching :meth:`density` exactly, since both go through
+        :meth:`_h_bin` on the component's own :attr:`h_edges`.
         """
         elements3 = np.asarray(elements3, dtype=float)
         if elements3.ndim == 0 or elements3.shape[-1] != 3:
@@ -1318,8 +1685,12 @@ class Digest2Histogram(PopulationDensity):
             f", h_interpolation={self.h_interpolation!r}"
             if self.h_interpolation != "none" else ""
         )
+        extend = (
+            f", h_extend_to={self.h_extend_to!r}"
+            if self.h_extend_to is not None else ""
+        )
         return (
             f"Digest2Histogram(label={self.label!r}, variant={self.variant!r}, "
             f"classes={self.classes!r}, total_count={self.total_count:.0f}"
-            f"{clamp}{interp})"
+            f"{clamp}{interp}{extend})"
         )

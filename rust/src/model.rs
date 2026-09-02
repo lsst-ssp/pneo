@@ -13,6 +13,20 @@
 //!   maps to the top H bin.  `+inf` clamps (it compares `>=`), `NaN` does not.
 //!   `H < 0` is deliberately left out of support in both modes.
 //!
+//! **The H axis length is data-driven, and that is what carries D-19.** The
+//! finite H extension (`Digest2Histogram(h_extend_to=30.0)`) appends a synthetic
+//! 19th H bin `[25.5, 30.0)` to every cell.  Python builds the extended edge,
+//! count and coefficient arrays *before* the handoff, so from this file's point
+//! of view an extended model is simply a model with `dims[3] == 19` and a 20-long
+//! `edges[3]` — **no kernel change at all**, and none of the code below knows the
+//! extension exists.  Everything the extension needs already follows from the
+//! rules above: the density above `h_edges[-1]` is exactly `0.0` (hard
+//! truncation at the further-out boundary), and the synthetic bin is looked up
+//! by the same half-open rule as any other.  `CoreModel::new`'s "finite and
+//! strictly increasing" edge check is what rejects a nonsensical extension.
+//! Bit-identity with `Digest2Histogram.density` in extended mode — histogram and
+//! pchip — is asserted in `tests/test_backend_parity.py`.
+//!
 //! The smooth-in-H mode (`Digest2Histogram(h_interpolation="pchip")`) is carried
 //! as an optional per-interval coefficient array instead of the flat density
 //! table.  The coefficients are **not** recomputed here: Python precomputes them
@@ -76,6 +90,22 @@ impl Histogram {
             }
         }
         bin_index(&self.edges[3], h)
+    }
+
+    /// The H value at and above which this component's density is exactly 0.
+    ///
+    /// `Digest2Histogram.support["H"][1]`, computed the same way: the last H
+    /// edge normally (25.5, or `h_extend_to` under D-19), `+inf` under the
+    /// D-14 clamp, where the density never runs out above the support.  Used
+    /// only by the D-19 mechanism counter in `kernel::classify_one`; the
+    /// density lookup itself goes through `h_bin` and does not consult this.
+    #[inline]
+    pub fn h_support_end(&self) -> f64 {
+        if self.h_top_bin_infinite {
+            f64::INFINITY
+        } else {
+            *self.edges[3].last().unwrap()
+        }
     }
 
     /// Number density; exactly `0.0` outside the support.
@@ -260,6 +290,52 @@ mod tests {
         assert_eq!(hist.density(0.5, 0.5, 0.5, -0.5), 0.0);
         assert_eq!(hist.density(0.5, 0.5, 0.5, f64::NAN), 0.0);
         assert_eq!(hist.density(1.5, 0.5, 0.5, 0.5), 0.0);
+    }
+
+    /// D-19: an H axis carrying the synthetic extension bin needs no special
+    /// case here.  Built exactly as `digest42.backend` hands it over — one more
+    /// edge, one more table entry per cell, the extension entry a bit-for-bit
+    /// copy of the top bin's density — and checked for the three properties the
+    /// Python side guarantees: exact continuity at the old support end, a flat
+    /// value across the whole extension, and hard zero at and above the new one.
+    #[test]
+    fn extended_h_axis_needs_no_kernel_special_case() {
+        // Base bins [0,1), [1,2) with the "top" bin 2 wide?  Keep it concrete
+        // instead: base edges 0,1,2 (top bin [1,2), width 1), extended to 4.5.
+        let hist = Histogram {
+            dims: [1, 1, 1, 3],
+            edges: [
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0, 2.0, 4.5],
+            ],
+            // The third entry IS the second, as Python's
+            // `_density_table[..., -1] = _density_table[..., -2]` makes it.
+            table: vec![10.0, 20.0, 20.0],
+            h_coeffs: None,
+            h_top_bin_infinite: false,
+            qei: true,
+            label: "extended".into(),
+        };
+        let d = |h: f64| hist.density(0.5, 0.5, 0.5, h);
+        // Exact continuity across the old support end H = 2.0.
+        assert_eq!(d(f64::from_bits(2.0f64.to_bits() - 1)), 20.0);
+        assert_eq!(d(2.0), 20.0);
+        // Flat all the way across the synthetic bin.
+        assert_eq!(d(3.0), 20.0);
+        assert_eq!(d(4.0), 20.0);
+        assert_eq!(d(f64::from_bits(4.5f64.to_bits() - 1)), 20.0);
+        // D-4 still holds, at the new boundary.
+        assert_eq!(d(4.5), 0.0);
+        assert_eq!(d(4.5 + 1e-9), 0.0);
+        assert_eq!(d(1e9), 0.0);
+        assert_eq!(d(f64::INFINITY), 0.0);
+        assert_eq!(d(f64::NAN), 0.0);
+        assert_eq!(d(-1e-300), 0.0);
+        // Below the extension nothing moved.
+        assert_eq!(d(0.0), 10.0);
+        assert_eq!(d(0.5), 10.0);
     }
 
     #[test]

@@ -181,6 +181,13 @@ impl CoreModel {
     /// `(q, e, i[rad], H)` bin edges, `*_parameterization` is `"qei"`/`"aei"`
     /// and `*_h_top_bin_infinite` selects the D-14 digest2-emulation clamp.
     ///
+    /// The bin shape is taken from `dims` and the axis lengths from the edge
+    /// arrays, so the D-19 finite H extension
+    /// (`Digest2Histogram(h_extend_to=...)`) arrives here as nothing more than
+    /// `dims.3 == 19` with a 20-long `h_edges` — Python builds the extended
+    /// arrays before the handoff and this constructor needs no knowledge of the
+    /// mode.  See `model.rs`'s header.
+    ///
     /// `*_h_coeffs` are the optional smooth-in-H Horner coefficients
     /// (`Digest2Histogram.h_coeffs` flattened C-order, 3 per (cell, H bin)).
     /// When a component supplies them they *replace* its table inside
@@ -354,6 +361,12 @@ fn outcome_to_dict<'py>(py: Python<'py>, o: Outcome) -> PyResult<Bound<'py, PyDi
     d.set_item("n_nodes", o.n_nodes)?;
     d.set_item("n_masked_nonfinite", o.n_masked_nonfinite)?;
     d.set_item("n_masked_det", o.n_masked_det)?;
+    // D-19 mechanism evidence; see `kernel::Outcome::n_h_at_or_above_support`.
+    // Always emitted, including in `diagnostics=False` mode — that is the
+    // whole point of it being a counter rather than a per-node array.
+    d.set_item("n_h_at_or_above_support", o.n_h_at_or_above_support)?;
+    d.set_item("w_h_finite", o.w_h_finite)?;
+    d.set_item("w_h_at_or_above_support", o.w_h_at_or_above_support)?;
     match o.diag {
         None => {
             for k in [
@@ -384,7 +397,8 @@ fn outcome_to_dict<'py>(py: Python<'py>, o: Outcome) -> PyResult<Bound<'py, PyDi
 /// Classify one tracklet.
 ///
 /// Returns a dict with `lambda_neo`, `lambda_other`, `n_nodes`,
-/// `n_masked_nonfinite`, `n_masked_det`, and — when `diagnostics` is true —
+/// `n_masked_nonfinite`, `n_masked_det`, `n_h_at_or_above_support`,
+/// `w_h_finite`, `w_h_at_or_above_support`, and — when `diagnostics` is true —
 /// the per-node arrays `rho`, `rho_dot`, `weight`, `integrand_neo`,
 /// `integrand_other`, `node_H`, `node_q` (all `None` otherwise, with no
 /// per-node allocation performed at all).

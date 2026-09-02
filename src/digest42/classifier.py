@@ -140,6 +140,42 @@ class ClassificationResult:
         which is a different thing from an empty admissible region — so
         :meth:`measure_fraction_H_above` and :meth:`posterior_mass_where`
         raise instead of returning a meaningless ``0.0``.
+    status : str
+        **How ``p_neo`` was arrived at**, so that a downstream analysis never
+        has to guess.  One of:
+
+        ``"ok"``
+            A likelihood-based posterior.  This includes the one-sided cases
+            (``p_neo`` exactly 1.0 or 0.0, ``log_lr`` +/-inf), which *are*
+            posteriors: one component genuinely has zero support there.
+        ``"fully_truncated_flagged"``
+            ``p_neo = 1.0`` assigned by the **D-19 triage policy**, not
+            computed: the admissible region is non-empty, both Lambdas are
+            exactly zero, **and the cause is the H support running out** — at
+            least :data:`H_TRUNCATION_MEASURE_MIN` of the region's measure over
+            its evaluable nodes lies at or above both models' H support end.
+            No posterior exists, so ``log_lr`` is ``nan``.  See
+            :func:`_posterior` for the empirical basis (11/11 true NEOs on real
+            NEOCP astrometry), :func:`_fully_truncated_in_H` for why the
+            trigger is gated on that mechanism rather than on the zero itself,
+            and :attr:`policy_assigned` for the boolean.
+        ``"both_zero"``
+            ``p_neo = nan``: both Lambdas exactly zero over a non-empty region
+            whose mechanism is **not** the faint-end wall — the region lies
+            inside the H support in cells the model holds no objects in, or
+            below the support (implied H < 0), or has no evaluable node at all.
+            Genuinely uninformative, and NOT eligible for the triage score.
+        ``"empty_region"``
+            ``p_neo = nan``: the admissible region is empty (``n_nodes == 0``),
+            genuinely uninformative geometry.  Unchanged by D-19.
+        ``"overflow"``
+            ``p_neo = 0.5``: both Lambdas overflowed to +inf.
+        ``"nan"``
+            ``p_neo = nan``: a component returned NaN (a bug in that
+            component).
+
+        Defaults to ``"ok"`` so that hand-constructed results (tests, custom
+        drivers) keep working.
     """
 
     p_neo: float
@@ -159,6 +195,24 @@ class ClassificationResult:
     #: thing from an empty admissible region, and the §2.6 helpers below refuse
     #: to answer rather than return a meaningless 0.0.
     diagnostics: bool = True
+    #: How ``p_neo`` was arrived at; see the class docstring for the vocabulary.
+    #: The one value that must never be conflated with the others is
+    #: ``"fully_truncated_flagged"`` — a D-19 policy assignment rather than a
+    #: posterior.
+    status: str = "ok"
+
+    @property
+    def policy_assigned(self) -> bool:
+        """True iff ``p_neo`` is a D-19 triage-policy assignment, not a posterior.
+
+        Equivalent to ``status == "fully_truncated_flagged"``.  Exposed as a
+        named boolean because this is the question every analysis has to ask
+        before pooling scores: a policy-assigned 1.0 carries no calibration
+        information (both likelihoods were exactly zero), so it belongs in its
+        own accounting line rather than in a reliability bin.  See
+        :func:`_posterior` for the full statement of the policy.
+        """
+        return self.status == "fully_truncated_flagged"
 
     def _require_diagnostics(self, what: str) -> None:
         if not self.diagnostics:
@@ -176,10 +230,27 @@ class ClassificationResult:
         Sum of the cell weights of nodes whose implied absolute magnitude
         exceeds ``h``, divided by the total weight — i.e. the area fraction of
         the (rho, rho_dot) admissible region that lies beyond a model's H
-        support (DESIGN §2.6; ``h = 25.5`` for the digest2 components).  This
-        is a property of the *geometry*, not of the posterior: it says how much
-        of the integration domain a truncation removes.  Nodes with NaN H count
-        as not exceeding ``h``.  Returns 0.0 for an empty region.
+        support (DESIGN §2.6).  This is a property of the *geometry*, not of
+        the posterior: it says how much of the integration domain a truncation
+        removes.  Nodes with NaN H count as not exceeding ``h``.  Returns 0.0
+        for an empty region.
+
+        ``h`` is **not** defaulted and is not 25.5 by assumption: pass the
+        support end of the components you actually scored with —
+        ``digest42.classifier.h_support_end(neo, other)``, which is 25.5 for
+        the D-4 digest2 pair, ``h_extend_to`` under D-19, and ``inf`` under the
+        D-14 clamp (where this diagnostic is vacuous, since nothing is
+        truncated above).
+
+        .. warning::
+           **This method cannot be used to detect a D-19 policy-assigned
+           tracklet.**  It answers a question about the *region*, and it counts
+           NaN-H nodes as "not above ``h``", so a tracklet whose nodes were all
+           masked returns 0.0 — indistinguishable from a tracklet comfortably
+           inside the support.  The reliable detector is the stored triple
+           ``(n_nodes > 0, lambda_neo == 0.0, lambda_other == 0.0)``, or
+           :attr:`status` / :attr:`policy_assigned` when the result object
+           itself is at hand.
 
         Raises ValueError if the tracklet was classified with
         ``diagnostics=False``: the node arrays were never materialized, and 0.0
@@ -202,8 +273,15 @@ class ClassificationResult:
         ----------
         mask : array of bool, or callable
             A boolean array over the nodes, or a callable taking this result
-            and returning one.  Example (the §2.6 truncation corner):
-            ``res.posterior_mass_where(lambda r: (r.node_q > 1.3) & (r.node_H > 25.5))``
+            and returning one.  Example (the §2.6 truncation corner) — note
+            that the H threshold must be the support end of the components
+            actually scored, ``h_support_end(neo, other)``, not the literal
+            25.5, which is only right for the unextended D-4 pair::
+
+                h_max = digest42.classifier.h_support_end(neo, other)
+                res.posterior_mass_where(
+                    lambda r: (r.node_q > 1.3) & (r.node_H > h_max)
+                )
         component : {"neo", "other", "both"}
             Which integrand to weight by.
         normalize : bool
@@ -410,20 +488,232 @@ def _sanitize(x: np.ndarray) -> np.ndarray:
     return np.where(np.isfinite(x), x, 0.0)
 
 
-def _posterior(lam_neo: float, lam_other: float) -> tuple[float, float, str]:
+def h_support_end(neo, other) -> float:
+    """The H value at and above which BOTH components are exactly zero.
+
+    ``max`` over the pair of each component's ``support["H"][1]``, because
+    "outside both supports" needs the *further* of the two boundaries.  For the
+    shipped :class:`~digest42.population.Digest2Histogram` pair this is 25.5,
+    or ``h_extend_to`` under D-19, or ``+inf`` under the D-14 clamp (which
+    never runs out of model above 25.5).
+
+    Returns ``nan`` for a component that does not expose a usable ``H``
+    support.  That is deliberate and it fails *safe*: the D-19 mechanism test
+    below compares ``H >= h_support_end``, which is False for every H when the
+    bound is NaN, so an unknown support means the triage policy simply never
+    fires and the tracklet keeps the honest ``nan``.
+    """
+    ends = []
+    for d in (neo, other):
+        try:
+            hi = float(dict(d.support)["H"][1])
+        except (AttributeError, TypeError, KeyError, IndexError, ValueError):
+            return float("nan")
+        ends.append(hi)
+    if not ends or any(np.isnan(x) for x in ends):
+        return float("nan")
+    return float(max(ends))
+
+
+#: D-19 trigger threshold: the fraction of the admissible region's *measure*
+#: that must lie at or above the H support end before the triage policy fires.
+#:
+#: Not a knob — a declared constant, and the measurement that fixes it is a
+#: total separation rather than a tuning:
+#:
+#:   * the 11 real NEOCP wall tracklets (validation/NEOCP_PILOT.md, the
+#:     empirical basis of D-19) have measure fractions
+#:     **0.985628 … 1.000000** (minimum: 2021 UY);
+#:   * both adversarial-review false-positive classes — a hole in the model
+#:     inside the support, and implied H below zero — have measure fraction
+#:     **exactly 0.000000**.
+#:
+#: Any value in (0, 0.9856) separates them perfectly; 0.95 sits inside that
+#: gap with a wide margin on both sides.
+#:
+#: **Why not exactly 1.0**, which is what "the whole region is above the
+#: support" would literally mean: 5 of the 11 real cases have a thin sliver of
+#: nodes just below 25.5 (minimum implied H 25.40–25.50, i.e. still inside the
+#: top bin [24, 25.5)) which happen to fall in *empty* (q, e, i) cells.
+#: Requiring 1.0 drops those 5 back to nan and destroys 5/11 of the very
+#: measurement the policy rests on.  NEOCP_PILOT.md already characterises these
+#: tracklets by exactly this statistic and in exactly this way — "the minimum
+#: measure fraction above the support among them is 0.9856" — so a measure
+#: criterion below that number is the population's pre-existing definition, not
+#: a new one invented here.
+#:
+#: **Why measure and not a node count**: the measure is grid-independent and is
+#: the quantity DESIGN §2.6(b) reports; a node-count fraction moves with node
+#: placement (the same 11 give 0.9663 … 1.0 by node count).
+H_TRUNCATION_MEASURE_MIN: float = 0.95
+
+
+def _fully_truncated_in_H(
+    n_h_finite: int, w_h_finite: float, w_h_at_or_above_support: float
+) -> bool:
+    """The D-19 trigger: is a 0/0 outcome caused by the H support running out?
+
+    ``True`` iff there is at least one node with finite implied H **and at
+    least :data:`H_TRUNCATION_MEASURE_MIN` of the admissible region's measure
+    over those nodes lies at or above the pair's H support end**
+    (:func:`h_support_end`).  That is the *mechanism* the triage policy is
+    licensed for, and nothing else is.  See :data:`H_TRUNCATION_MEASURE_MIN`
+    for why the threshold is 0.95 rather than 1.0, and for the measurement that
+    separates the two cases by the whole interval (0, 0.9856).
+
+    Why the mechanism and not the symptom.  "Both Lambdas are exactly zero over
+    a non-empty admissible region" has at least three causes, and only the
+    first is the DESIGN §2.6 wall:
+
+    1. **the H support runs out** — every node implies an object fainter than
+       the model describes.  Fast + faint => close => small => interesting;
+       this is the case the NEOCP pilot measured at 11/11 true NEOs, and the
+       only one D-19 covers;
+    2. **implied H below zero** — a bright, slow, distant hypothesis
+       (measured: V = 14, rho in [50, 100] AU, 0.01 deg/day gives implied H in
+       [-6.0, -5.3]).  Also support truncation, at the *other* end, and the
+       empirical argument inverts: absurdly *large* and bright is the opposite
+       of a small close NEO.  Must not fire;
+    3. **a hole in the model** — every node's implied H is comfortably inside
+       [0, 25.5) but the model happens to hold no objects in those (q, e, i, H)
+       cells (measured: V = 6, 0.001 deg/day at the default grid gives 29 900
+       nodes with implied H in [4.6, 16.0] and zero density throughout, because
+       nothing that bright exists in the digest2 model at those geometries).
+       Nothing has been truncated; the model is simply saying "no". Must not
+       fire — and firing here would have the classifier assert
+       *support truncation* in its warning text about a tracklet where none
+       occurred.
+
+    Both false-positive classes were constructed by the adversarial review;
+    both are regression-tested (``tests/test_classifier.py``).
+
+    ``n_h_finite == 0`` (equivalently a zero total measure) — no node has a
+    finite implied H at all — returns ``False`` **deliberately**.  There is then no evidence about where the
+    region sits relative to the support, because the region has no evaluable
+    point in it: every node was masked as unbound or non-finite (D-8, WP2's
+    guard). That is a geometry/photometry failure, not a faint-end failure, and
+    it gets the honest ``nan`` with status ``"both_zero"``.
+
+    Cheap by construction: all three arguments are scalars both backends
+    already accumulate while walking the grid, so the test costs nothing and
+    works identically in ``diagnostics=False`` mode.
+
+    **Why an exact-zero Lambda is a safe trigger for *this* model.**  The
+    branch upstream tests ``lam_neo + lam_other <= 0.0`` exactly, with no
+    tolerance, which is only sound because a *non-zero* contribution from the
+    digest2 histogram cannot underflow to zero: the smallest non-zero density
+    the shipped pair can return is 3.2e-2 (NEO) / 3.6e-5 (other) in the
+    interface's units — some 300 orders of magnitude above the double
+    denormal floor — and the Jacobian and cell weights are ordinary-magnitude
+    numbers. So "exactly 0.0" really does mean "no node had any density",
+    never "the mass rounded away".  A v1 population component with genuinely
+    tiny per-cell counts (or one normalized to unit total) could break that
+    reasoning, at which point the trigger would need a relative floor rather
+    than an exact zero.  Recorded here because the assumption is invisible at
+    the call site.
+    """
+    if int(n_h_finite) <= 0 or not (float(w_h_finite) > 0.0):
+        return False
+    frac = float(w_h_at_or_above_support) / float(w_h_finite)
+    return frac >= H_TRUNCATION_MEASURE_MIN
+
+
+def _posterior(
+    lam_neo: float,
+    lam_other: float,
+    n_nodes: int,
+    n_h_finite: int,
+    w_h_finite: float,
+    w_h_at_or_above_support: float,
+) -> tuple[float, float, str]:
     """(p_neo, log_lr, status) from the two marginal likelihoods.
+
+    **This is the single shared post-processing step of both backends.**  The
+    Python reference (:func:`classify`) and the Rust glue
+    (:func:`digest42.backend._result_from_core`) both call this function and
+    then :func:`_warn_status`; nothing about the posterior, the status
+    vocabulary or the warnings is implemented per backend, so the two cannot
+    drift apart on any of it by construction.
+
+    ``n_nodes`` is the number of quadrature nodes in the admissible region;
+    ``n_h_finite`` how many of them have finite implied H (and finite
+    elements), i.e. how many the density was actually evaluated at; and
+    ``w_h_finite`` the total quadrature measure over those nodes; and
+    ``w_h_at_or_above_support`` the part of that measure lying at or above the
+    pair's H support end (:func:`h_support_end`).  The last three are the
+    **mechanism evidence** for the D-19 triage policy — see
+    :func:`_fully_truncated_in_H` for why the policy must be gated on the
+    mechanism and not on the symptom, and why the criterion is measure-weighted
+    rather than a node count.  All are taken as arguments rather than inferred,
+    so that the distinction lives in exactly one place and works identically in
+    ``diagnostics=False`` mode on both backends.
 
     ``status`` is one of:
 
     ``"ok"``          a usable posterior (includes the one-sided cases, where
                       p_neo is exactly 1.0 or 0.0 and log_lr is +/-inf);
-    ``"both_zero"``   both Lambdas are exactly zero — no support in either
-                      model (support truncation, DESIGN §2.6);
+    ``"fully_truncated_flagged"``
+                      ``n_nodes > 0``, both Lambdas exactly zero, **and** the
+                      cause is the H support running out: at least one node has
+                      a finite implied H and at least
+                      :data:`H_TRUNCATION_MEASURE_MIN` of the region's measure
+                      over those nodes lies at or above the support end
+                      (DESIGN §2.6, D-4).  Under the D-19
+                      triage policy this returns ``p_neo = 1.0``,
+                      ``log_lr = nan``.  **That 1.0 is a policy assignment, not
+                      a posterior** — see below;
+    ``"both_zero"``   both Lambdas are exactly zero and the D-19 mechanism test
+                      does **not** hold — either the region is empty
+                      (``n_nodes == 0``; both callers intercept that earlier
+                      and report ``"empty_region"`` instead), or no node has a
+                      finite implied H, or the region is not predominantly at
+                      or above the support end — it lies inside the support (or
+                      below it) and the model simply holds no objects there.
+                      All of those are genuinely uninformative and return
+                      ``nan``. This status **is** reachable from
+                      :func:`classify`;
     ``"overflow"``    both Lambdas overflowed to +inf; the ratio is
                       indeterminate and p_neo = 0.5 is returned as the
                       symmetric limit;
     ``"nan"``         a Lambda came back NaN (should not happen: the integrand
                       is sanitized node by node).
+
+    The D-19 triage policy, stated precisely
+    ----------------------------------------
+    A tracklet in the ``"fully_truncated_flagged"`` state carries **no
+    likelihood information at all**:
+    both components integrate to exactly zero, so the ratio that defines
+    P(NEO) (DESIGN §2.4) does not exist and no amount of arithmetic can
+    manufacture it.  What does exist is an empirical fact about which tracklets
+    land in this state.  The NEOCP pilot measured it on real MPC discovery
+    astrometry (validation/NEOCP_PILOT.md): **11 of 499 tracklets are fully
+    truncated and 11 of those 11 are true NEOs** — median sky rate 6.8 deg/day,
+    median V 20.7, median true q 0.94 AU.  The mechanism is not statistical
+    luck: "the entire admissible region implies H > 25.5" means fast *and*
+    faint, which means close, which (at that apparent brightness) means small,
+    which in the v0 model's own terms means a near-Earth object.
+
+    The maintainer's decision is therefore to score these 1.0 as a **triage
+    policy** rather than refuse them.  Two consequences are deliberate:
+
+    * ``log_lr`` stays ``nan``.  It is the prior-free sufficient statistic
+      (D-3), and there is no statistic here — reporting ``+inf`` would claim an
+      infinitely strong *likelihood* ratio, which is exactly the false claim
+      this policy must not make.
+    * the status is its own value, distinct from ``"ok"``, and is carried on
+      :class:`ClassificationResult` (``status`` /
+      :attr:`~ClassificationResult.policy_assigned`).  Any analysis that mixes
+      calibrated posteriors with policy assignments — a reliability diagram, an
+      expected-count check, an ECE — can and must separate them; a 1.0 that
+      came from this branch is not evidence about the model's calibration.
+
+    The genuinely uninformative cases are all the others, and they keep their
+    ``nan``: an empty admissible region (``n_nodes == 0``, status
+    ``"empty_region"``), a region with no evaluable node
+    (``n_h_finite == 0``), and a region that sits inside — or below — the H
+    support where the model simply holds nothing
+    (status ``"both_zero"``).  In none of those has anything been observed
+    about faintness or speed, so the empirical NEOCP argument does not apply.
     """
     if np.isnan(lam_neo) or np.isnan(lam_other):
         return float("nan"), float("nan"), "nan"
@@ -439,6 +729,15 @@ def _posterior(lam_neo: float, lam_other: float) -> tuple[float, float, str]:
 
     total = lam_neo + lam_other
     if total <= 0.0:
+        # D-19 triage policy, gated on the MECHANISM: a non-empty admissible
+        # region every evaluable node of which lies at or above the pair's H
+        # support end.  Empirically 11/11 true NEOs.  Any other route to 0/0 —
+        # empty region, no evaluable node, H below the support, or a hole in
+        # the model inside the support — falls through to the honest nan.
+        if int(n_nodes) > 0 and _fully_truncated_in_H(
+            n_h_finite, w_h_finite, w_h_at_or_above_support
+        ):
+            return 1.0, float("nan"), "fully_truncated_flagged"
         return float("nan"), float("nan"), "both_zero"
     if lam_other <= 0.0:
         return 1.0, float("inf"), "ok"
@@ -454,12 +753,46 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
     Factored out of `classify` so that the Rust backend raises *exactly* the
     same warnings (same text, same category) as the reference path.
     """
-    if status == "both_zero":
+    if status == "fully_truncated_flagged":
         warnings.warn(
             "digest42.classify: both marginal likelihoods are zero "
-            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); the "
-            "tracklet has no support in either population model (support "
-            "truncation, DESIGN §2.6). P(NEO) is undefined.",
+            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}) over a "
+            "NON-EMPTY admissible region whose measure lies almost entirely "
+            f"(>= {100.0 * H_TRUNCATION_MEASURE_MIN:g}%) AT OR ABOVE both "
+            "population models' H support end "
+            "(support truncation at the faint end, DESIGN §2.6, D-4). "
+            "P(NEO) = 1.0 is returned as a "
+            "TRIAGE POLICY ASSIGNMENT, NOT a posterior — the likelihoods carry "
+            "no information whatsoever, and log_lr is nan for that reason. The "
+            "policy is empirical (D-19): on real NEOCP discovery astrometry "
+            "11 of 11 fully truncated tracklets were true NEOs, because fast + "
+            "faint implies close implies small. This result is flagged: "
+            "ClassificationResult.status == 'fully_truncated_flagged' "
+            "(ClassificationResult.policy_assigned is True). Analyses that "
+            "measure calibration MUST separate these from likelihood-based "
+            "scores.",
+            RuntimeWarning,
+            stacklevel=stacklevel,
+        )
+    elif status == "both_zero":
+        # Reachable, and its text must NOT claim support truncation: this is
+        # the branch for every 0/0 whose mechanism is something else (a hole in
+        # the model inside the support, implied H below zero, or no evaluable
+        # node at all).  See `_fully_truncated_in_H`.
+        warnings.warn(
+            "digest42.classify: both marginal likelihoods are zero "
+            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); both "
+            "population components evaluate to zero everywhere in the "
+            "admissible region. P(NEO) is undefined. This is NOT the D-19 "
+            "faint-end case and no triage score is assigned: less than "
+            f"{100.0 * H_TRUNCATION_MEASURE_MIN:g}% of the region's measure "
+            "lies at or above the models' H support end, so the cause "
+            "is not the DESIGN §2.6 H wall but one of — no node with a finite "
+            "implied H (all unbound/degenerate), an implied H below the "
+            "support (a bright, slow, distant hypothesis), or implied H inside "
+            "the support in (q, e, i, H) cells the model holds no objects in. "
+            "Inspect ClassificationResult.node_H and node_q "
+            "(diagnostics=True) to see which.",
             RuntimeWarning,
             stacklevel=stacklevel,
         )
@@ -507,8 +840,21 @@ def classify(
     given, geocentric) -> ranging grid over the admissible region -> per-node
     elements, H(V, rho), Jacobian dets (with the parameterization of each
     density) -> Lambda_C as weighted sums -> posterior. Hyperbolic/NaN nodes
-    contribute zero. A tracklet with an empty admissible region or zero total
-    likelihood returns p_neo = nan with a warning, not an exception.
+    contribute zero. Nothing here raises for a degenerate tracklet; the two
+    degenerate outcomes are distinguished by
+    ``ClassificationResult.status``, and each carries a warning:
+
+    * **empty admissible region** (``n_nodes == 0``, ``status ==
+      "empty_region"``) -> ``p_neo = nan``.  The geometry admits no bound
+      orbit; genuinely uninformative.
+    * **fully truncated** (``n_nodes > 0`` but both Lambdas exactly zero,
+      ``status == "fully_truncated_flagged"``) -> ``p_neo = 1.0``,
+      ``log_lr = nan``, by the **D-19 triage policy**.  The region is a real
+      set of orbits, all of them outside both models' H support (DESIGN §2.6),
+      so no posterior exists; the 1.0 is a policy assignment backed by the
+      NEOCP pilot's 11/11 true-NEO measurement, and
+      ``ClassificationResult.policy_assigned`` marks it as such.  See
+      :func:`_posterior`.
 
     Parameters
     ----------
@@ -687,6 +1033,7 @@ def classify(
             n_masked_nonfinite=0,
             n_masked_det=0,
             diagnostics=diagnostics,
+            status="empty_region",
         )
 
     rho = grid.rho
@@ -770,7 +1117,20 @@ def classify(
     lam_neo = float(np.sum(node_neo * grid.weight))
     lam_other = float(np.sum(node_other * grid.weight))
 
-    p_neo, log_lr, status = _posterior(lam_neo, lam_other)
+    # D-19 mechanism evidence, computed from the same `good` mask and the same
+    # H array the integrand used.  `h_sup` is NaN for a component with no
+    # declared H support, and `H >= nan` is False for every node, so an unknown
+    # support means the policy never fires (fails safe).
+    h_sup = h_support_end(neo, other)
+    n_h_finite = int(np.count_nonzero(good))
+    with np.errstate(invalid="ignore"):
+        above = good & (H >= h_sup)
+    w_h_finite = float(np.sum(grid.weight[good]))
+    w_h_above = float(np.sum(grid.weight[above]))
+
+    p_neo, log_lr, status = _posterior(
+        lam_neo, lam_other, n_nodes, n_h_finite, w_h_finite, w_h_above
+    )
     _warn_status(status, lam_neo, lam_other, stacklevel=2)
 
     if not diagnostics:
@@ -801,6 +1161,7 @@ def classify(
         n_masked_nonfinite=n_masked_nonfinite,
         n_masked_det=int(np.count_nonzero(det_bad)),
         diagnostics=diagnostics,
+        status=status,
     )
 
 
@@ -835,13 +1196,33 @@ def classify_many(
     ``diagnostics=False`` or chunk the batch when scoring more than a few
     hundred tracklets at a time.
 
-    Degenerate tracklets (empty admissible region, zero total likelihood) come
-    back with ``p_neo = nan``; **that is the reliable per-tracklet signal**.
-    Do not count warnings: Python's default ``"default"`` filter deduplicates
-    by (message, category, module, lineno), so a batch of five tracklets with
-    an empty admissible region raises the warning once, not five times. Filter
-    the results on ``np.isnan(res.p_neo)`` instead (and on ``res.n_nodes == 0``
-    to tell an empty region from a fully truncated one).
+    Degenerate tracklets: **read ``res.status``, and never count warnings.**
+    Python's default ``"default"`` filter deduplicates by (message, category,
+    module, lineno), so a batch of five tracklets with an empty admissible
+    region raises the warning once, not five times.
+
+    The two degenerate outcomes no longer share a signal, and this is a change
+    from earlier versions of this API:
+
+    * ``res.status == "empty_region"`` (equivalently ``res.n_nodes == 0``) ->
+      ``p_neo = nan``.  **``np.isnan(res.p_neo)`` still finds exactly the
+      unscorable tracklets**, and after D-19 this is essentially the only way
+      to get one.
+    * ``res.status == "fully_truncated_flagged"`` (equivalently
+      ``res.policy_assigned``) -> ``p_neo = 1.0``, ``log_lr = nan``.  This used
+      to be a ``nan`` score too; under the D-19 triage policy it is a
+      **defined** score, so a filter written as ``np.isnan(p)`` will no longer
+      see it, while a filter written as ``np.isnan(log_lr)`` will see both
+      degenerate classes.  Choose deliberately: for "which tracklets could not
+      be scored" use ``isnan(p_neo)``; for "which scores are likelihood-based"
+      use ``status == "ok"``, i.e. exclude ``policy_assigned``.
+
+    Any calibration statistic (reliability diagram, expected NEO count, ECE,
+    Brier) must exclude the policy-assigned tracklets or report them on their
+    own line: both their likelihoods were exactly zero, so they carry no
+    information about whether the posterior is calibrated.  Ranking statistics
+    (AUC) may legitimately include them — the policy is a claim about their
+    rank, and it is the claim being tested.
     """
     from .backend import (
         ModelNotSupported,

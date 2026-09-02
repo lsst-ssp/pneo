@@ -898,18 +898,28 @@ def test_truncated_H_gives_zero_likelihoods_and_warns(d2pair):
     (the object sits on the Sun-observer line), so
     H = V - 5 log10(rho * r) exactly, and with rho <= 10 AU the largest
     rho * r on the grid is ~110 -> H >= V - 10.2 = 29.8 > 25.5 (DESIGN §2.6).
+
+    Behaviour UPDATED by the D-19 triage policy.  This used to assert
+    ``p_neo = nan``; the maintainer's decision is that a *non-empty* admissible
+    region entirely outside both H supports is scored 1.0 as a policy
+    assignment (11/11 true NEOs on real NEOCP astrometry), with ``log_lr = nan``
+    and a distinct status.  Both Lambdas being exactly zero — the physics of
+    the case — is unchanged and is still asserted here.
     """
     neo, other = d2pair
     R, V = _observer()
     att = opposition_tracklet(0.3, 40.0, R_obs=R)
 
-    with pytest.warns(RuntimeWarning, match="both marginal likelihoods are zero"):
+    with pytest.warns(RuntimeWarning, match="TRIAGE POLICY ASSIGNMENT"):
         res = classify(att, neo, other, R_obs=R, V_obs=V,
                        rho_min=0.01, rho_max=10.0, n_rho=100, n_rhodot=50)
 
     assert res.grid.rho.size > 0  # the region is NOT empty; the density is 0
     assert res.lambda_neo == 0.0 and res.lambda_other == 0.0
-    assert np.isnan(res.p_neo) and np.isnan(res.log_lr)
+    assert res.p_neo == 1.0
+    assert np.isnan(res.log_lr)
+    assert res.status == "fully_truncated_flagged"
+    assert res.policy_assigned is True
     assert np.all(res.node_density_neo == 0.0)
     # ... and the §2.6 diagnostic says exactly why.
     assert res.measure_fraction_H_above(25.5) == pytest.approx(1.0)
@@ -1176,3 +1186,501 @@ def test_posterior_map_concentrates_near_the_truth(d2pair):
     assert 0.5 < peak_rho / true_rho < 2.0, (peak_rho, true_rho)
     # ... and the object is (correctly) not a NEO.
     assert res.p_neo < 0.1, res.p_neo
+
+
+# ---------------------------------------------------------------------------
+# D-19 — the 0/0 triage policy
+#
+# Maintainer decision, empirical basis validation/NEOCP_PILOT.md: 11 of 499
+# real NEOCP discovery tracklets have their ENTIRE admissible region above
+# H = 25.5 and score 0/0 under D-4, and 11 of those 11 are true NEOs.  Such a
+# tracklet is now assigned p_neo = 1.0 with log_lr = nan and a distinct status.
+#
+# The policy lives in `classifier._posterior` / `_warn_status`, which is the
+# SHARED post-processing both backends call — so the tests below run on both
+# and assert identity rather than similarity.
+# ---------------------------------------------------------------------------
+
+
+def _fully_truncated_case():
+    """A tracklet whose whole admissible region implies H > 25.5.
+
+    Same construction as test_truncated_H_gives_zero_likelihoods_and_warns:
+    at the anti-solar point the phase angle is zero at every node, so
+    H = V - 5 log10(rho r) exactly, and with rho <= 10 AU the largest rho r on
+    the grid is ~110 -> H >= V - 10.2 = 29.8 (DESIGN §2.6).
+    """
+    R, V = _observer()
+    att = opposition_tracklet(0.3, 40.0, R_obs=R)
+    return att, R, V, dict(rho_min=0.01, rho_max=10.0, n_rho=100, n_rhodot=50)
+
+
+def test_posterior_helper_gates_the_policy_on_the_mechanism():
+    """Unit table for the shared branch, independent of any geometry.
+
+    Signature: ``_posterior(lam_neo, lam_other, n_nodes, n_h_finite,
+    w_h_finite, w_h_at_or_above_support)``.  The last three are the D-19
+    mechanism evidence; the policy fires only when the region's *measure* is at
+    least ``H_TRUNCATION_MEASURE_MIN`` at/above the support end.
+    """
+    from digest42.classifier import (H_TRUNCATION_MEASURE_MIN,
+                                     _fully_truncated_in_H, _posterior)
+
+    T = H_TRUNCATION_MEASURE_MIN
+    assert 0.0 < T <= 1.0
+    # The constant must sit inside the measured separation gap: the 11 real
+    # NEOCP wall tracklets are at >= 0.985628, both false-positive classes at
+    # exactly 0.0.  A constant outside (0, 0.985628] breaks one side or the
+    # other, and this is the assertion that says so.
+    assert 0.0 < T <= 0.985628
+
+    # THE policy case: 4500 evaluable nodes, all of the measure above support.
+    p, l, s = _posterior(0.0, 0.0, 4500, 4500, 10.0, 10.0)
+    assert (p, s) == (1.0, "fully_truncated_flagged")
+    assert np.isnan(l)
+    # ... and just over the threshold still fires
+    assert _posterior(0.0, 0.0, 4500, 4500, 1.0, T)[2] == \
+        "fully_truncated_flagged"
+
+    # Every non-mechanism route to 0/0 must fall through to nan/both_zero.
+    for label, args in {
+        "empty region": (0.0, 0.0, 0, 0, 0.0, 0.0),
+        "no evaluable node (all masked)": (0.0, 0.0, 4500, 0, 0.0, 0.0),
+        "zero measure despite finite nodes": (0.0, 0.0, 4500, 4500, 0.0, 0.0),
+        "none of the measure above support (hole in the model / H < 0)":
+            (0.0, 0.0, 4500, 4500, 10.0, 0.0),
+        "half the measure above support": (0.0, 0.0, 4500, 4500, 10.0, 5.0),
+        "just under the threshold":
+            (0.0, 0.0, 4500, 4500, 1.0, np.nextafter(T, 0.0)),
+    }.items():
+        p, l, s = _posterior(*args)
+        assert np.isnan(p) and np.isnan(l) and s == "both_zero", label
+
+    # The predicate itself, including the deliberate n_h_finite == 0 choice.
+    assert _fully_truncated_in_H(4500, 10.0, 10.0) is True
+    assert _fully_truncated_in_H(0, 0.0, 0.0) is False   # documented decision
+    assert _fully_truncated_in_H(4500, 0.0, 0.0) is False
+    assert _fully_truncated_in_H(4500, 10.0, 0.0) is False
+    assert _fully_truncated_in_H(1, 1.0, 1.0) is True
+    # the real cases' worst measure fraction must pass, and the false
+    # positives' must not
+    assert _fully_truncated_in_H(1000, 1.0, 0.985628) is True
+    assert _fully_truncated_in_H(1000, 1.0, 0.0) is False
+
+    # every other branch is untouched by D-19 (mechanism args are irrelevant
+    # once a Lambda is non-zero)
+    assert _posterior(2.0, 6.0, 10, 10, 1.0, 1.0) == (
+        0.25, pytest.approx(np.log(2.0 / 6.0)), "ok"
+    )
+    p, l, s = _posterior(1.0, 0.0, 10, 10, 1.0, 0.0)
+    assert (p, l, s) == (1.0, float("inf"), "ok")   # a real one-sided posterior
+    p, l, s = _posterior(0.0, 1.0, 10, 10, 1.0, 0.0)
+    assert (p, l, s) == (0.0, float("-inf"), "ok")
+    p, l, s = _posterior(np.inf, np.inf, 10, 10, 1.0, 1.0)
+    assert (p, l, s) == (0.5, 0.0, "overflow")
+    p, l, s = _posterior(np.nan, 1.0, 10, 10, 1.0, 1.0)
+    assert np.isnan(p) and s == "nan"
+
+
+def test_h_support_end_is_the_pair_level_boundary():
+    from digest42.classifier import h_support_end
+
+    trunc = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    ext = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=30.0)
+    clamp = Digest2Histogram.neo_other_pair(MODEL_PATH,
+                                            h_top_bin_infinite=True)
+    assert h_support_end(*trunc) == 25.5
+    assert h_support_end(*ext) == 30.0
+    assert h_support_end(*clamp) == float("inf")
+    # max over the pair, not either side alone
+    assert h_support_end(trunc[0], ext[1]) == 30.0
+    assert h_support_end(ext[0], trunc[1]) == 30.0
+
+    # A component with no usable H support gives nan, which makes the D-19
+    # comparison False for every H -- i.e. the policy fails SAFE.
+    class NoSupport:
+        parameterization = "qei"
+        label = "x"
+
+        def density(self, e, h):  # pragma: no cover
+            raise NotImplementedError
+
+        def sample(self, n, rng):  # pragma: no cover
+            raise NotImplementedError
+
+        @property
+        def support(self):
+            return {"q": (0.0, 1.0), "e": (0.0, 1.0), "i": (0.0, 1.0)}
+
+    assert np.isnan(h_support_end(NoSupport(), trunc[1]))
+    assert np.isnan(h_support_end(trunc[0], NoSupport()))
+
+
+#: The adversarial review's two false-positive classes, as (name, tracklet
+#: builder args, classify kwargs).  Both produce a NON-EMPTY admissible region
+#: with both Lambdas exactly zero, and NEITHER is the DESIGN §2.6 faint-end
+#: wall, so neither may be assigned a triage score.
+_POLICY_FALSE_POSITIVES = {
+    # (1) a hole in the model: every implied H is comfortably INSIDE [0, 25.5)
+    #     but the digest2 model holds no object that bright at those
+    #     geometries.  Measured: 29 900 nodes, implied H in [4.56, 15.99].
+    "hole_in_model": ((0.001, 6.0), {}),
+    "hole_in_model_distant": ((0.005, 6.0), dict(rho_min=1.0, rho_max=100.0)),
+    # (2) implied H BELOW the support: a bright, slow, distant hypothesis.
+    #     Measured: 15 100 nodes, implied H in [-6.02, -5.27].  Support
+    #     truncation, but at the other end, where the empirical argument
+    #     inverts (absurdly large and bright, not small and close).
+    "h_below_zero": ((0.01, 14.0), dict(rho_min=50.0, rho_max=100.0)),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_POLICY_FALSE_POSITIVES))
+@pytest.mark.parametrize("backend", ["python", "rust"])
+@pytest.mark.parametrize("diagnostics", [True, False])
+def test_policy_does_not_fire_on_zero_density_without_h_truncation(
+        d2pair, case, backend, diagnostics):
+    """Regression for the adversarial review's false positives.
+
+    These must come back nan with status "both_zero" and a warning that does
+    NOT claim support truncation — the old trigger fired on the *symptom*
+    (both Lambdas zero) and asserted a mechanism that had not occurred.
+    """
+    from digest42.backend import core_available
+
+    if backend == "rust" and not core_available():  # pragma: no cover
+        pytest.skip("digest42._core not built")
+    neo, other = d2pair
+    (rate, vmag), kw = _POLICY_FALSE_POSITIVES[case]
+    R, V = _observer()
+    att = opposition_tracklet(rate, vmag, R_obs=R)
+    with pytest.warns(RuntimeWarning) as rec:
+        res = classify(att, neo, other, R_obs=R, V_obs=V, backend=backend,
+                       diagnostics=diagnostics, **kw)
+    msg = " ".join(str(w.message) for w in rec)
+
+    # the premise: a real region, both Lambdas exactly zero
+    assert res.n_nodes > 0
+    assert res.lambda_neo == 0.0 and res.lambda_other == 0.0
+    # the fix
+    assert np.isnan(res.p_neo), f"{case}/{backend}: p = {res.p_neo}"
+    assert np.isnan(res.log_lr)
+    assert res.status == "both_zero"
+    assert res.policy_assigned is False
+    # and the warning must not lie
+    assert "TRIAGE POLICY" not in msg
+    assert "NOT the D-19 faint-end case" in msg
+    assert "no triage score is assigned" in msg
+
+
+@pytest.mark.parametrize("case", sorted(_POLICY_FALSE_POSITIVES))
+def test_false_positive_geometries_are_what_the_review_described(d2pair, case):
+    """Not a vacuous regression: check the geometry is the claimed one.
+
+    If a future change made these tracklets score normally (or empty), the
+    test above would still pass while testing nothing.  This pins the
+    mechanism: the region is non-empty, every node has a finite implied H, and
+    NONE of them is at/above the support end.
+    """
+    from digest42.classifier import h_support_end
+
+    neo, other = d2pair
+    (rate, vmag), kw = _POLICY_FALSE_POSITIVES[case]
+    R, V = _observer()
+    att = opposition_tracklet(rate, vmag, R_obs=R)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        res = classify(att, neo, other, R_obs=R, V_obs=V, backend="python",
+                       **kw)
+    h = np.asarray(res.node_H, dtype=float)
+    w = np.asarray(res.grid.weight, dtype=float)
+    fin = np.isfinite(h)
+    h_sup = h_support_end(neo, other)
+    assert h_sup == 25.5
+    # The distant case is a narrow admissible sliver (measured: 50 nodes), so
+    # the bar is "non-empty and evaluable", not a node count.
+    assert res.n_nodes >= 20
+    assert fin.sum() == res.n_nodes
+    # The measure fraction at/above the support end is what the trigger reads,
+    # and for both false-positive classes it is EXACTLY zero — the whole
+    # separation from the 11 real cases (>= 0.985628).
+    frac = w[fin & (h >= h_sup)].sum() / w[fin].sum()
+    assert frac == 0.0, f"{case}: measure fraction above support = {frac}"
+    if case.startswith("hole_in_model"):
+        assert h[fin].min() >= 0.0 and h[fin].max() < 25.5   # INSIDE support
+    else:
+        assert h[fin].max() < 0.0                            # below support
+
+
+def test_all_nodes_masked_is_not_a_policy_case(d2pair):
+    """n_h_finite == 0: the documented deliberate decision.
+
+    A region every node of which was masked as unbound/non-finite has no
+    evaluable point, so there is no evidence about where it sits relative to
+    the support.  Driven through the real classifier by handing it a component
+    pair whose H support is unreachable is fragile; instead this drives the
+    shared helper directly and asserts the documented choice, and the
+    end-to-end coverage of the branch comes from the false-positive cases
+    above.
+    """
+    from digest42.classifier import _fully_truncated_in_H, _posterior
+
+    assert _fully_truncated_in_H(0, 0.0, 0.0) is False
+    assert _posterior(0.0, 0.0, 9999, 0, 0.0, 0.0)[2] == "both_zero"
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_fully_truncated_tracklet_is_policy_scored_one(d2pair, backend):
+    from digest42.backend import core_available
+
+    if backend == "rust" and not core_available():  # pragma: no cover
+        pytest.skip("digest42._core not built")
+    neo, other = d2pair
+    att, R, V, kw = _fully_truncated_case()
+    with pytest.warns(RuntimeWarning) as rec:
+        res = classify(att, neo, other, R_obs=R, V_obs=V, backend=backend, **kw)
+    msg = str(rec[0].message)
+
+    # The physics of the case is unchanged: a real region, both Lambdas zero.
+    assert res.n_nodes > 0
+    assert res.lambda_neo == 0.0 and res.lambda_other == 0.0
+    # The policy.
+    assert res.p_neo == 1.0
+    assert np.isnan(res.log_lr), "log_lr must stay nan: there is no LR"
+    assert res.status == "fully_truncated_flagged"
+    assert res.policy_assigned is True
+    # The warning has to say what it is, and cite the decision.
+    assert "TRIAGE POLICY ASSIGNMENT" in msg
+    assert "NOT a posterior" in msg
+    assert "D-19" in msg
+    assert "11 of 11" in msg
+    assert "fully_truncated_flagged" in msg
+
+
+def test_both_backends_agree_exactly_on_the_policy(d2pair):
+    """Implemented once in the shared post-processing, so this is identity."""
+    from digest42.backend import core_available
+
+    if not core_available():  # pragma: no cover
+        pytest.skip("digest42._core not built")
+    neo, other = d2pair
+    att, R, V, kw = _fully_truncated_case()
+    out = {}
+    for backend in ("python", "rust"):
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            out[backend] = (
+                classify(att, neo, other, R_obs=R, V_obs=V, backend=backend,
+                         **kw),
+                [str(w.message) for w in rec],
+            )
+    a, wa = out["python"]
+    b, wb = out["rust"]
+    assert a.p_neo == b.p_neo == 1.0
+    assert np.isnan(a.log_lr) and np.isnan(b.log_lr)
+    assert a.status == b.status == "fully_truncated_flagged"
+    assert a.policy_assigned and b.policy_assigned
+    assert a.n_nodes == b.n_nodes
+    assert wa == wb, "the two backends must raise the same warning text"
+
+
+def test_policy_assigned_one_is_distinguishable_from_a_real_one(obs):
+    """A likelihood-based p = 1.0 and a policy p = 1.0 must not look alike.
+
+    This is the load-bearing requirement of the D-19 flag: without it an
+    analysis pooling scores could not tell "the other component genuinely has
+    no support here" (a posterior, log_lr = +inf) from "neither component has
+    any support here" (no posterior at all, log_lr = nan).
+    """
+    R, V = obs
+    att = ecliptic_tracklet(120.0, 0.4, 20.0, R_obs=R)
+    neo, _ = _toy_pair()
+    dead = BoxDensity("other", "qei", x=(1.3, 5.0), e=(0.0, 0.9),
+                      i=(0.0, np.pi), H=(1e3, 1e4), amplitude=1.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        real = classify(att, neo, dead, R_obs=R, V_obs=V, backend="python")
+    assert real.p_neo == 1.0
+    assert real.log_lr == float("inf")
+    assert real.status == "ok"
+    assert real.policy_assigned is False
+    assert real.lambda_neo > 0.0
+
+    d2 = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    att2, R2, V2, kw = _fully_truncated_case()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        policy = classify(att2, *d2, R_obs=R2, V_obs=V2, backend="python", **kw)
+    assert policy.p_neo == real.p_neo == 1.0        # same score...
+    assert policy.status != real.status             # ...different provenance
+    assert policy.policy_assigned and not real.policy_assigned
+    assert np.isnan(policy.log_lr) and np.isinf(real.log_lr)
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+def test_empty_admissible_region_still_returns_nan_under_the_policy(d2pair,
+                                                                    backend):
+    """n_nodes == 0 is genuinely uninformative geometry: unchanged by D-19.
+
+    The policy's premise is "fast and faint, therefore close and small".  An
+    empty admissible region carries no such observation — no orbit was
+    admitted at all — so there is nothing to triage on and the answer stays
+    nan.
+    """
+    from digest42.backend import core_available
+
+    if backend == "rust" and not core_available():  # pragma: no cover
+        pytest.skip("digest42._core not built")
+    neo, other = d2pair
+    R, V = _observer()
+    att = opposition_tracklet(1.0, 20.0, R_obs=R)
+    att.ra_rate *= 500.0
+    att.dec_rate *= 500.0
+    with pytest.warns(RuntimeWarning, match="empty admissible region"):
+        res = classify(att, neo, other, R_obs=R, V_obs=V, rho_min=0.01,
+                       rho_max=0.02, backend=backend)
+    assert res.n_nodes == 0
+    assert np.isnan(res.p_neo) and np.isnan(res.log_lr)
+    assert res.status == "empty_region"
+    assert res.policy_assigned is False
+
+
+def test_classify_many_carries_the_policy_status(d2pair):
+    """Batched, both backends, mixing a policy case with normal tracklets."""
+    neo, other = d2pair
+    att_trunc, R, V, kw = _fully_truncated_case()
+    att_ok = opposition_tracklet(0.3, 21.0, R_obs=R)
+    atts = [att_ok, att_trunc, att_ok]
+    for backend in ("python", "rust"):
+        from digest42.backend import core_available
+
+        if backend == "rust" and not core_available():  # pragma: no cover
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            batch = classify_many(
+                atts, neo, other,
+                R_obs=R, V_obs=V, backend=backend, **kw
+            )
+        flags = [r.policy_assigned for r in batch]
+        assert flags == [False, True, False], (backend, flags)
+        assert batch[1].p_neo == 1.0 and np.isnan(batch[1].log_lr)
+        assert [r.status for r in batch] == [
+            "ok", "fully_truncated_flagged", "ok"
+        ]
+        # The reliable per-tracklet "unscorable" filter is now isnan(p_neo),
+        # and it finds NOTHING here: the policy case IS scored.
+        assert not any(np.isnan(r.p_neo) for r in batch)
+        # isnan(log_lr) is the filter that still finds it.
+        assert [np.isnan(r.log_lr) for r in batch] == [False, True, False]
+
+
+@pytest.mark.parametrize("interp", ["none", "pchip"])
+def test_the_h_extension_removes_the_need_for_the_policy(interp):
+    """D-19's two halves, on the same tracklet.
+
+    With the support extended to H = 30 the same fully truncated tracklet gets
+    a genuine likelihood-based posterior (status "ok", finite log_lr) instead
+    of a policy assignment — which is the point of the extension: the policy is
+    the fallback for a model that stops too early, not the fix.
+    """
+    # Geometry chosen so that BOTH halves of the statement are visible, which
+    # constrains it tightly once the D-19 trigger is gated on the mechanism:
+    #   * the region must be ENTIRELY at/above 25.5, or the unextended pair
+    #     gets "both_zero" rather than the policy (correctly — that is the
+    #     false-positive fix), and
+    #   * it must be mostly BELOW 30, or the extension is 0/0 as well.
+    # `_fully_truncated_case`'s V = 40 satisfies the first and fails the
+    # second (H >= 29.8 everywhere). Measured for this one: implied H in
+    # [25.71, 28.55] over 20 000 nodes.
+    R, V = _observer()
+    att = opposition_tracklet(0.3, 26.5, R_obs=R)
+    kw = dict(rho_min=0.3, rho_max=0.8, n_rho=400, n_rhodot=50)
+    trunc = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        a = classify(att, *trunc, R_obs=R, V_obs=V, backend="python", **kw)
+    assert a.policy_assigned
+
+    ext = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=30.0,
+                                          h_interpolation=interp)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        b = classify(att, *ext, R_obs=R, V_obs=V, backend="python", **kw)
+    assert b.status == "ok"
+    assert b.policy_assigned is False
+    assert b.lambda_neo > 0.0 and b.lambda_other > 0.0
+    assert 0.0 < b.p_neo < 1.0        # a genuine, informative posterior
+    assert np.isfinite(b.log_lr)
+    assert b.n_nodes == a.n_nodes    # identical geometry; only the model moved
+
+
+#: The 11 real NEOCP tracklets whose entire admissible region is above H = 25.5
+#: (validation/NEOCP_PILOT.md) — the empirical basis of D-19.  Pinned by name
+#: because the whole policy rests on them: if a change to the trigger stops any
+#: of these flagging, the measurement no longer supports the decision.
+NEOCP_WALL_DESIGNATIONS = (
+    "2019 TK", "2019 UM2", "2019 VH", "2020 GO", "2020 TR6", "2020 UT",
+    "2021 BO2", "2021 JX5", "2021 KQ1", "2021 TG10", "2021 UY",
+)
+
+PILOT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "validation", "output", "neocp_pilot",
+)
+
+
+@pytest.mark.parametrize("backend", ["python", "rust"])
+@pytest.mark.parametrize("diagnostics", [True, False])
+def test_the_eleven_real_neocp_wall_tracklets_still_flag(backend, diagnostics):
+    """The D-19 acceptance criterion, on the real astrometry itself.
+
+    The adversarial review's fix (gate the trigger on the mechanism) and the
+    maintainer's decision (score these 11) pull in opposite directions, and the
+    tension is real: 5 of the 11 have a thin sliver of nodes just BELOW 25.5
+    (implied H 25.40-25.50, inside the top bin, in empty (q, e, i) cells), so a
+    literal "every evaluable node at/above the support end" rule drops those 5
+    back to nan.  The measure-weighted criterion resolves it — the 11 sit at
+    measure fraction >= 0.985628 and both false-positive classes at exactly
+    0.0.  This test is what keeps that resolution honest: it drives the real
+    cached tracklets through the real classifier on both backends and in both
+    diagnostics modes, and requires all 11 to carry the policy flag.
+    """
+    from digest42.backend import core_available
+
+    if backend == "rust" and not core_available():  # pragma: no cover
+        pytest.skip("digest42._core not built")
+    if not os.path.exists(os.path.join(PILOT_DIR, "tracklets.json")):
+        pytest.skip("NEOCP pilot tracklets not present")
+
+    import json
+
+    from astropy.time import Time
+
+    with open(os.path.join(PILOT_DIR, "tracklets.json")) as fh:
+        blob = json.load(fh)
+    by_desig = {t["designation"]: t for t in blob["tracklets"]}
+    missing = [d for d in NEOCP_WALL_DESIGNATIONS if d not in by_desig]
+    assert not missing, f"pilot cache is missing {missing}"
+
+    neo, other = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    for desig in NEOCP_WALL_DESIGNATIONS:
+        t = by_desig[desig]
+        att = Attributable(
+            ra=float(t["ra"]), dec=float(t["dec"]),
+            ra_rate=float(t["ra_rate"]), dec_rate=float(t["dec_rate"]),
+            epoch=Time(float(t["epoch_jd_utc"]), format="jd", scale="utc"),
+            v_mag=float(t["v_mag"]),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            res = classify(
+                att, neo, other, lon_deg=float(t["lon_deg"]),
+                lat_deg=float(t["lat_deg"]), height_m=float(t["height_m"]),
+                backend=backend, diagnostics=diagnostics,
+            )
+        assert res.lambda_neo == 0.0 and res.lambda_other == 0.0, desig
+        assert res.n_nodes > 0, desig
+        assert res.p_neo == 1.0, f"{desig}: p = {res.p_neo}"
+        assert np.isnan(res.log_lr), desig
+        assert res.status == "fully_truncated_flagged", f"{desig}: {res.status}"
+        assert res.policy_assigned is True, desig

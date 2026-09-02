@@ -62,11 +62,11 @@ Limitations of the Rust backend (it falls back to Python unless
 * ``diagnostics=True`` is only defined for a single attributable variant.
 
 Independently of the backend choice, the two components must agree on every
-*paired* density-mode flag — ``h_interpolation`` (D-10) and
-``h_top_bin_infinite`` (D-14).  Both change the effective model without touching
-the geometry, and P(NEO) is a ratio of the two components' marginal likelihoods,
-so a one-sided setting yields an artifact of the mismatch rather than the model
-with that knob applied.  :func:`check_component_pair` enforces this and is
+*paired* density-mode flag — ``h_interpolation`` (D-10), ``h_top_bin_infinite``
+(D-14) and ``h_extend_to`` (D-19).  All three change the effective model without
+touching the geometry, and P(NEO) is a ratio of the two components' marginal
+likelihoods, so a one-sided setting yields an artifact of the mismatch rather
+than the model with that knob applied.  :func:`check_component_pair` enforces this and is
 called from :func:`core_model_for` and both Rust entry points; it raises
 ``ValueError`` (a caller error) rather than :class:`ModelNotSupported`, because
 falling back to the reference would score the artifact instead of refusing it.
@@ -264,9 +264,17 @@ def _edges_of(density) -> list[np.ndarray]:
 #: as the entire honest mode change, in a direction that is pure modelling
 #: error.  The class docstrings of both knobs already said "both components
 #: together"; this is the check that enforces it.
+#: ``h_extend_to`` (D-19) is the newest and the most violently one-sided of the
+#: three if mismatched: extending only the NEO component adds ~1.7x its own
+#: total mass to the numerator of P(NEO) and nothing at all to the denominator,
+#: so every faint tracklet would be driven towards 1.0 by the pairing error
+#: alone.  It is a float-or-None rather than a bool/str, which the ``a == b``
+#: test below handles unchanged (``None == None``, and the value is validated
+#: finite by ``Digest2Histogram``, so no NaN can defeat the comparison).
 _PAIRED_MODE_FLAGS = (
     ("h_interpolation", "none", "the H reconstruction (D-10)"),
     ("h_top_bin_infinite", False, "the digest2-emulation H clamp (D-14)"),
+    ("h_extend_to", None, "the finite H extension (D-19)"),
 )
 
 
@@ -356,6 +364,36 @@ def _h_coeffs_of(density) -> np.ndarray | None:
     return co
 
 
+def _edges_key(density) -> tuple:
+    """Exact content hash of the four bin-edge arrays, for the cache key.
+
+    The edge arrays define every bin lookup and are copied wholesale into the
+    Rust ``CoreModel``, so a component whose edges have changed is a different
+    model even when its density table is byte-for-byte identical (the D-19
+    30-vs-40 case, where the synthetic slab is a copy of the top slab).  Small
+    enough — ~70 doubles across the four axes — to hash in full rather than
+    sample, so unlike the density-table entry this one has no residual
+    "an adversary could collide it" caveat.
+
+    A component that does not expose the edges at all hashes to a marker that
+    is distinct from every real edge set, and identical between two such
+    components — which is correct: they are then keyed on the table alone,
+    exactly as before this entry existed.
+    """
+    try:
+        arrays = [
+            np.ascontiguousarray(
+                np.asarray(getattr(density, name), dtype=float)
+            )
+            for name in ("q_edges", "e_edges", "i_edges", "h_edges")
+        ]
+    except (AttributeError, TypeError, ValueError):
+        return ("no-edges",)
+    return tuple(
+        (a.shape, hash(a.tobytes())) for a in arrays
+    )
+
+
 def _fingerprint(density) -> tuple:
     """A cache key that changes when the component's *content* changes.
 
@@ -367,9 +405,11 @@ def _fingerprint(density) -> tuple:
 
     The fingerprint therefore carries every field the Rust side copies —
     parameterization, the D-14 clamp flag, the ``h_interpolation`` mode and a
-    content check on its coefficients, the provenance strings and the bin
-    shape — plus a cheap content check on the density table: its buffer
-    address, its exact sum, and a hash of a strided sample.
+    content check on its coefficients, the D-19 ``h_extend_to`` reach, an exact
+    content hash of the four bin-edge arrays (:func:`_edges_key`), the
+    provenance strings and the bin shape — plus a cheap content check on the
+    density table: its buffer address, its exact sum, and a hash of a strided
+    sample.
 
     ``h_interpolation`` has to be in here for exactly the same reason as the
     D-14 flag: switching the mode changes what the kernel must evaluate but
@@ -429,6 +469,24 @@ def _fingerprint(density) -> tuple:
         str(getattr(density, "parameterization", None)),
         bool(getattr(density, "h_top_bin_infinite", False)),
         str(getattr(density, "h_interpolation", "none")),
+        # D-19, and this one is LOAD-BEARING rather than belt-and-braces.  The
+        # extension is the first mode that changes the *bin edges* the kernel
+        # is handed.  Worse, the synthetic bin's density-table entry is a
+        # bit-for-bit copy of the top bin's (it is what buys exact continuity
+        # at 25.5), so two components extended to h_extend_to = 30 and = 40
+        # have **bit-identical density tables of identical shape** and differ
+        # only in `h_edges[-1]`.  Without this entry the second one would
+        # silently reuse the first one's cached CoreModel and score every H in
+        # [30, 40) as out of support.  The earlier fields catch a switch on/off
+        # (the H axis grows by one); only this one catches a change of reach.
+        repr(getattr(density, "h_extend_to", None)),
+        # ... and this closes the whole CLASS rather than that one instance.
+        # `h_extend_to` is a `Digest2Histogram` attribute; a custom component,
+        # or a future mode, can move an edge without touching it. The edges are
+        # what the kernel copies and what every bin lookup is defined against,
+        # so they belong in the key on their own account — hashed in full
+        # (they are ~70 doubles in total, so there is no reason to sample).
+        _edges_key(density),
         co_key,
         str(getattr(density, "label", "")),
         str(getattr(density, "variant", "")),
@@ -677,11 +735,35 @@ def _result_from_core(
             n_masked_nonfinite=0,
             n_masked_det=0,
             diagnostics=diagnostics,
+            status="empty_region",
         )
 
     lam_neo = float(out["lambda_neo"])
     lam_other = float(out["lambda_other"])
-    p_neo, log_lr, status = _posterior(lam_neo, lam_other)
+    # `_posterior` + `_warn_status` are the classifier's own shared
+    # post-processing, imported rather than reimplemented: the posterior
+    # convention, the status vocabulary (including the D-19
+    # "fully_truncated_flagged" triage policy) and the warning texts are
+    # therefore identical between the backends by construction, not by
+    # agreement.
+    #
+    # The mechanism evidence for the D-19 gate arrives from the kernel as
+    # scalar accumulators, NOT from the per-node arrays: `w_h_finite` and
+    # `w_h_at_or_above_support` are emitted in `diagnostics=False` mode too,
+    # which is the mode every production batch runs in.  `n_h_finite` is
+    # `n_nodes - n_masked_nonfinite` by the kernel's own definition of that
+    # mask (finite elements AND finite implied H), which is exactly the Python
+    # reference's `good`.
+    n_masked_nonfinite = int(out["n_masked_nonfinite"])
+    n_h_finite = n_nodes - n_masked_nonfinite
+    p_neo, log_lr, status = _posterior(
+        lam_neo,
+        lam_other,
+        n_nodes,
+        n_h_finite,
+        float(out["w_h_finite"]),
+        float(out["w_h_at_or_above_support"]),
+    )
     _warn_status(status, lam_neo, lam_other, stacklevel=stacklevel)
 
     if diagnostics:
@@ -720,9 +802,10 @@ def _result_from_core(
         node_H=node_H,
         node_q=node_q,
         n_nodes=n_nodes,
-        n_masked_nonfinite=int(out["n_masked_nonfinite"]),
+        n_masked_nonfinite=n_masked_nonfinite,
         n_masked_det=int(out["n_masked_det"]),
         diagnostics=diagnostics,
+        status=status,
     )
 
 

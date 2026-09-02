@@ -1761,3 +1761,434 @@ def test_pchip_mode_documents_what_it_does_not_fix():
     assert "staircase" in doc
     assert "cumulative" in doc
     assert "invents density" in doc
+
+
+# ---------------------------------------------------------------------------
+# D-19 — the finite H extension (h_extend_to)
+#
+# Every test below re-derives its expectation from the partition arrays
+# transcribed by hand at the top of this file (REF_HPART) or from the
+# unextended component, never from the extension machinery itself.
+# ---------------------------------------------------------------------------
+
+#: The canonical value D-19 names.
+H_EXT = 30.0
+#: Upper edge of the model's top H bin, and its width, from the hand
+#: transcription — NOT from population.H_EDGES.
+H_TOP_REF = 25.5
+H_TOP_WIDTH_REF = 25.5 - 24.0
+
+
+@pytest.fixture(scope="module")
+def ext_pair():
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT)
+
+
+@pytest.fixture(scope="module")
+def ext_pchip_pair():
+    return Digest2Histogram.neo_other_pair(
+        MODEL_PATH, "All", h_extend_to=H_EXT, h_interpolation="pchip"
+    )
+
+
+@pytest.fixture(scope="module")
+def plain_pair():
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, "All")
+
+
+@pytest.fixture(scope="module")
+def pchip_pair():
+    return Digest2Histogram.neo_other_pair(
+        MODEL_PATH, "All", h_interpolation="pchip"
+    )
+
+
+def _random_qeih(n, rng, h_lo=-1.0, h_hi=32.0):
+    """(elements3, H) sweeping the whole box and well outside it."""
+    q = rng.uniform(-0.1, 105.0, n)
+    e = rng.uniform(-0.05, 1.2, n)
+    i = rng.uniform(-0.05, 3.3, n)
+    h = rng.uniform(h_lo, h_hi, n)
+    return np.stack([q, e, i], axis=-1), h
+
+
+def test_h_extend_to_validation():
+    counts = np.zeros(MODEL_SHAPE)
+    for bad in (25.5, 25.0, 0.0, -1.0):
+        with pytest.raises(ValueError, match="h_extend_to"):
+            Digest2Histogram(counts, "other", h_extend_to=bad)
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        with pytest.raises(ValueError, match="finite"):
+            Digest2Histogram(counts, "other", h_extend_to=bad)
+    # The smallest legal value is the next double above 25.5.
+    tiny = np.nextafter(25.5, np.inf)
+    c = Digest2Histogram(counts, "other", h_extend_to=tiny)
+    assert c.h_extend_to == tiny
+    # None is the default and is not the string "None".
+    assert Digest2Histogram(counts, "other").h_extend_to is None
+    # ints are accepted and normalized to float
+    assert Digest2Histogram(counts, "other", h_extend_to=30).h_extend_to == 30.0
+
+
+@pytest.mark.parametrize("interp", ["none", "pchip"])
+def test_h_extend_to_and_the_d14_clamp_are_mutually_exclusive(interp):
+    """Both kwarg orders, all three entry points."""
+    counts = np.zeros(MODEL_SHAPE)
+    kw = dict(h_interpolation=interp) if interp != "none" else {}
+    # h_extend_to first, clamp second
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram(counts, "other", h_extend_to=H_EXT,
+                         h_top_bin_infinite=True, **kw)
+    # clamp first, h_extend_to second (kwargs are order-independent in Python,
+    # so this checks the *guard* is unconditional rather than the call order)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram(counts, "other", h_top_bin_infinite=True,
+                         h_extend_to=H_EXT, **kw)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT,
+                                        h_top_bin_infinite=True, **kw)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+                                      h_top_bin_infinite=True,
+                                      h_extend_to=H_EXT, **kw)
+    # A bad *value* is reported as a bad value, not as a mode conflict, even
+    # when the clamp is also set (validation runs first).
+    with pytest.raises(ValueError, match="finite"):
+        Digest2Histogram(counts, "other", h_extend_to=float("inf"),
+                         h_top_bin_infinite=True)
+
+
+def test_h_extend_to_passes_through_the_factories():
+    pair = Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT)
+    assert [c.h_extend_to for c in pair] == [H_EXT, H_EXT]
+    assert all(c.shape == MODEL_SHAPE[:3] + (MODEL_SHAPE[3] + 1,) for c in pair)
+    assert [c.h_extend_to for c in
+            Digest2Histogram.neo_other_pair(MODEL_PATH, "All")] == [None, None]
+    one = Digest2Histogram.from_classes(MODEL_PATH, ["NEO"], "NEO",
+                                        h_extend_to=H_EXT)
+    assert one.h_extend_to == H_EXT
+    assert Digest2Histogram.from_classes(
+        MODEL_PATH, ["NEO"], "NEO").h_extend_to is None
+    assert f"h_extend_to={H_EXT!r}" in repr(one)
+    assert "h_extend_to" not in repr(
+        Digest2Histogram.from_classes(MODEL_PATH, ["NEO"], "NEO"))
+
+
+def test_extension_support_and_edges(ext_pair):
+    for c in ext_pair:
+        assert c.support["H"] == (0.0, H_EXT)
+        assert c.h_edges[-1] == H_EXT
+        assert c.h_edges[-2] == H_TOP_REF
+        assert len(c.h_edges) == len(REF_HPART) + 2
+        # q/e/i support untouched
+        assert c.support["q"] == (0.0, REF_QPART[-1])
+        assert c.support["e"] == (0.0, REF_EPART[-1])
+
+
+def test_extension_counts_are_the_documented_flat_continuation(ext_pair,
+                                                               plain_pair):
+    """counts[..., 18] == counts[..., 17] / 1.5 * (h_extend_to - 25.5) exactly.
+
+    The expectation is rebuilt from the *unextended* component's counts and the
+    hand-transcribed partition, so it cannot agree with the implementation by
+    sharing its arithmetic.
+    """
+    ratio = (H_EXT - H_TOP_REF) / H_TOP_WIDTH_REF
+    for plain, ext in zip(plain_pair, ext_pair):
+        base = np.asarray(plain.counts)
+        got = np.asarray(ext.counts)
+        assert got.shape == base.shape[:3] + (base.shape[3] + 1,)
+        # everything below is untouched, bit for bit
+        assert np.array_equal(got[..., :-1], base)
+        assert np.array_equal(got[..., -1], base[..., -1] * ratio)
+        # ... and total_count is the sum including the extension
+        assert ext.total_count == pytest.approx(
+            plain.total_count + float((base[..., -1] * ratio).sum()), rel=0, abs=0
+        )
+
+
+def test_extension_total_count_growth_is_the_documented_size(ext_pair,
+                                                             plain_pair):
+    """The NEO component grows x2.675, "other" x1.042 — the D-19 headline.
+
+    This is not a tautology check: it pins the *consequence* of the 55.8% /
+    1.4% top-bin mass split of DESIGN §2.6, which is the whole reason the
+    extension is a big deal on the NEO side and almost nothing on the other.
+    """
+    factors = {}
+    for plain, ext in zip(plain_pair, ext_pair):
+        top_frac = float(np.asarray(plain.counts)[..., -1].sum()) / plain.total_count
+        ratio = (H_EXT - H_TOP_REF) / H_TOP_WIDTH_REF
+        assert ext.total_count / plain.total_count == pytest.approx(
+            1.0 + ratio * top_frac, rel=1e-12
+        )
+        factors[plain.label] = ext.total_count / plain.total_count
+    assert factors["NEO"] == pytest.approx(2.6747, abs=1e-3)
+    assert factors["other"] == pytest.approx(1.0424, abs=1e-3)
+
+
+def test_extension_density_is_exactly_continuous_at_25_5(ext_pair):
+    """Cell by cell, over every populated cell: density(25.5-) == density(25.5).
+
+    Exact equality, not approx — the construction copies the top bin's density
+    table entry rather than recomputing it, precisely so this holds.
+    """
+    below = np.nextafter(H_TOP_REF, 0.0)
+    for c in ext_pair:
+        tab = c._density_table
+        assert np.array_equal(tab[..., -1], tab[..., -2])
+        # ... and through the public API, on a dense sweep of cell centres
+        qc = 0.5 * (np.asarray(c.q_edges)[:-1] + np.asarray(c.q_edges)[1:])
+        ec = 0.5 * (np.asarray(c.e_edges)[:-1] + np.asarray(c.e_edges)[1:])
+        ic = 0.5 * (np.asarray(c.i_edges)[:-1] + np.asarray(c.i_edges)[1:])
+        Q, E, I = np.meshgrid(qc, ec, ic, indexing="ij")
+        el3 = np.stack([Q.ravel(), E.ravel(), I.ravel()], axis=-1)
+        h_lo = np.full(el3.shape[0], below)
+        h_hi = np.full(el3.shape[0], H_TOP_REF)
+        d_lo, d_hi = c.density(el3, h_lo), c.density(el3, h_hi)
+        assert np.array_equal(d_lo, d_hi)
+        # and the extension really is flat across its whole width
+        for h in (25.6, 27.0, 29.0, np.nextafter(H_EXT, 0.0)):
+            assert np.array_equal(
+                c.density(el3, np.full(el3.shape[0], h)), d_hi
+            )
+        assert d_hi.max() > 0.0  # the test would be vacuous otherwise
+
+
+def test_extension_boundary_semantics(ext_pair):
+    """nextafter on both sides of h_extend_to, plus inf and nan."""
+    el3 = np.array([[0.5, 0.15, 0.05]])
+    for c in ext_pair:
+        inside = c.density(el3, np.array([np.nextafter(H_EXT, 0.0)]))
+        at = c.density(el3, np.array([H_EXT]))
+        above = c.density(el3, np.array([np.nextafter(H_EXT, np.inf)]))
+        assert at[0] == 0.0            # upper edge is EXCLUDED (half-open)
+        assert above[0] == 0.0
+        assert c.density(el3, np.array([np.inf]))[0] == 0.0
+        assert c.density(el3, np.array([np.nan]))[0] == 0.0
+        assert c.density(el3, np.array([-np.nextafter(0.0, 1.0)]))[0] == 0.0
+        if c.label == "NEO":
+            assert inside[0] > 0.0     # the cell is populated
+    # bin_indices agrees with density about what is in support
+    for c in ext_pair:
+        h = np.array([np.nextafter(H_EXT, 0.0), H_EXT, np.inf, np.nan, -1.0])
+        *_, ok = c.bin_indices(np.repeat(el3, 5, axis=0), h)
+        assert list(ok) == [True, False, False, False, False]
+
+
+@pytest.mark.parametrize("interp", ["none", "pchip"])
+def test_extension_leaves_the_model_below_the_wall_bit_identical(interp):
+    """Sub-25.5 bit-identity vs the unextended component.
+
+    Histogram mode: exact for every H < 25.5.  pchip mode: exact for H < 24
+    only — the extra cumulative knot turns the 25.5 knot from an end knot into
+    an interior one, which changes the cubic on [24, 25.5).  That bin's *mass*
+    is unaffected (asserted separately); its shape is not, and this test pins
+    both halves of that statement so the qualifier cannot rot.
+    """
+    plain = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+                                            h_interpolation=interp)
+    ext = Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT,
+                                          h_interpolation=interp)
+    rng = np.random.default_rng(20260902)
+    el3, h = _random_qeih(200_000, rng, h_lo=-1.0, h_hi=H_TOP_REF)
+    identical_below = H_TOP_REF if interp == "none" else 24.0
+    m = h < identical_below
+    assert m.sum() > 10_000
+    for a, b in zip(plain, ext):
+        assert np.array_equal(a.density(el3[m], h[m]), b.density(el3[m], h[m]))
+        if interp == "none":
+            # The whole sub-wall range, including H exactly on interior edges.
+            edges = np.asarray(a.h_edges)[:-1]
+            el_e = np.repeat(el3[:len(edges)], 1, axis=0)
+            assert np.array_equal(a.density(el_e, edges[:len(el_e)]),
+                                  b.density(el_e, edges[:len(el_e)]))
+        else:
+            # ... and the [24, 25.5) bin genuinely DOES move under pchip.
+            m2 = (h >= 24.0) & (h < H_TOP_REF)
+            da, db = a.density(el3[m2], h[m2]), b.density(el3[m2], h[m2])
+            assert not np.array_equal(da, db)
+
+
+def _mass_by_bin(c, n_sub=4001):
+    """Riemann-integrate the density over H per (cell, H bin) -> object counts.
+
+    Independent of the count arrays: it only calls :meth:`density`, and
+    multiplies by the cell volume the same way DESIGN §2.4 defines the density.
+    Midpoint rule, which is exact for the piecewise-constant mode and
+    O(h^2)-accurate for the cubic one.
+    """
+    edges = np.asarray(c.h_edges)
+    nq, ne, ni, nh = c.shape
+    qc = 0.5 * (np.asarray(c.q_edges)[:-1] + np.asarray(c.q_edges)[1:])
+    ec = 0.5 * (np.asarray(c.e_edges)[:-1] + np.asarray(c.e_edges)[1:])
+    ic = 0.5 * (np.asarray(c.i_edges)[:-1] + np.asarray(c.i_edges)[1:])
+    Q, E, I = np.meshgrid(qc, ec, ic, indexing="ij")
+    el3 = np.stack([Q.ravel(), E.ravel(), I.ravel()], axis=-1)
+    cell_vol = np.asarray(c.qei_volume).ravel() * ANGLE_VOLUME
+    out = np.empty((el3.shape[0], nh))
+    for k in range(nh):
+        lo, hi = edges[k], edges[k + 1]
+        s = np.linspace(lo, hi, n_sub)
+        mid = 0.5 * (s[:-1] + s[1:])
+        dh = np.diff(s)
+        acc = np.zeros(el3.shape[0])
+        for h_val, w in zip(mid, dh):
+            acc += c.density(el3, np.full(el3.shape[0], h_val)) * w
+        out[:, k] = acc * cell_vol
+    return out.reshape(nq, ne, ni, nh)
+
+
+@pytest.mark.parametrize("interp", ["none", "pchip"])
+def test_extension_conserves_mass_including_the_synthetic_bin(interp):
+    """Integral of the density over each H bin == that bin's object count.
+
+    Run on a REDUCED model (one populated cell) so the numerical integration is
+    affordable, but on the real bin geometry and the real construction, and
+    including the synthetic 19th bin in both modes.  This is the property that
+    makes the extension "real, normalizable mass" rather than an extrapolation.
+    """
+    rng = np.random.default_rng(7)
+    counts = np.zeros(MODEL_SHAPE)
+    # A cell with structure across H, including a populated top bin (which is
+    # what the extension continues) and a couple of empty bins in between.
+    counts[3, 1, 2, :] = rng.integers(0, 500, MODEL_SHAPE[3])
+    counts[3, 1, 2, 5] = 0.0
+    counts[3, 1, 2, 6] = 0.0
+    counts[3, 1, 2, -1] = 1234.0
+    c = Digest2Histogram(counts, "other", h_extend_to=H_EXT,
+                         h_interpolation=interp)
+    got = _mass_by_bin(c, n_sub=2001)[3, 1, 2]
+    want = np.asarray(c.counts)[3, 1, 2]
+    assert got.shape == want.shape == (MODEL_SHAPE[3] + 1,)
+    assert np.allclose(got, want, rtol=2e-6, atol=1e-9)
+    # The synthetic bin specifically, and the total.
+    assert got[-1] == pytest.approx(want[-1], rel=2e-6)
+    assert got.sum() == pytest.approx(c.total_count, rel=2e-6)
+    if interp == "pchip":
+        # What the *machinery* guarantees inside the extension is mass
+        # conservation (asserted above) and non-negativity — a mass-conserving
+        # monotone cubic through the extra knot is the defined behaviour, and
+        # the curve is not required to be flat.
+        #
+        # What actually happens is stronger, and is pinned here because it is a
+        # property of THIS extension count rather than of PCHIP: the flat
+        # continuation makes the extension interval's secant
+        # counts[17]*(w/1.5)/w equal the top bin's secant counts[17]/1.5, so
+        # PCHIP's harmonic-mean interior slope at the (now interior) 25.5 knot
+        # and its three-point end slope at the h_extend_to knot both land ON
+        # that common secant, the cubic degenerates to a straight line, and the
+        # reconstructed density inside the extension is the same constant the
+        # histogram mode uses — to floating-point noise, not by definition.
+        # Consequence for the report: extended+pchip and extended+histogram
+        # agree above 25.5 and differ only on [24, 25.5).
+        el3 = np.array([[
+            0.5 * (c.q_edges[3] + c.q_edges[4]),
+            0.5 * (c.e_edges[1] + c.e_edges[2]),
+            0.5 * (c.i_edges[2] + c.i_edges[3]),
+        ]])
+        vals = np.array([
+            c.density(el3, np.array([h]))[0]
+            for h in np.linspace(H_TOP_REF, H_EXT, 25, endpoint=False)
+        ])
+        assert vals.min() > 0.0
+        assert np.ptp(vals) <= 1e-12 * vals.max()
+        flat = Digest2Histogram(counts, "other", h_extend_to=H_EXT)
+        assert vals[0] == pytest.approx(
+            flat.density(el3, np.array([26.0]))[0], rel=1e-12
+        )
+        # ... and it is continuous with the [24, 25.5) cubic at 25.5, which the
+        # extension has turned into an interior knot of a C1 interpolant.
+        below = c.density(el3, np.array([np.nextafter(H_TOP_REF, 0.0)]))[0]
+        assert below == pytest.approx(vals[0], rel=1e-9)
+
+
+def test_extension_pchip_conserves_the_top_bin_mass_exactly():
+    """[24, 25.5) keeps counts[..., 17] even though its cubic changes.
+
+    Uses the exact antiderivative of the stored Horner coefficients rather than
+    a Riemann sum, so "exactly" means to double precision.
+    """
+    rng = np.random.default_rng(11)
+    counts = np.zeros(MODEL_SHAPE)
+    counts[3, 1, 2, :] = rng.integers(0, 500, MODEL_SHAPE[3])
+    plain = Digest2Histogram(counts, "other", h_interpolation="pchip")
+    ext = Digest2Histogram(counts, "other", h_extend_to=H_EXT,
+                           h_interpolation="pchip")
+    cell_vol = float(np.asarray(plain.qei_volume)[3, 1, 2]) * ANGLE_VOLUME
+    for c in (plain, ext):
+        for k in range(MODEL_SHAPE[3]):
+            a, b, cc = c.h_coeffs[3, 1, 2, k]
+            w = float(c.h_edges[k + 1] - c.h_edges[k])
+            mass = (a * w + b * w * w / 2.0 + cc * w ** 3 / 3.0) * cell_vol
+            assert mass == pytest.approx(counts[3, 1, 2, k], rel=1e-10,
+                                         abs=1e-9)
+    # the coefficients on [24, 25.5) really do differ between the two
+    assert not np.array_equal(plain.h_coeffs[3, 1, 2, -1],
+                              ext.h_coeffs[3, 1, 2, -2])
+
+
+def test_extension_count_and_density_agree_to_one_ulp(ext_pair):
+    """The documented residual of the exact-continuity construction.
+
+    The synthetic bin's density entry is copied from the top bin rather than
+    recomputed from its count, so ``count / (volume * (2 pi)^3)`` and the stored
+    density agree only to ~1 ulp.  Asserted rather than hidden; a real error
+    would be orders of magnitude larger.
+    """
+    for c in ext_pair:
+        cnt = np.asarray(c.counts)[..., -1]
+        vol = np.asarray(c.bin_volume)[..., -1] * ANGLE_VOLUME
+        want = cnt / vol
+        got = c._density_table[..., -1]
+        nz = want > 0.0
+        assert nz.any()
+        rel = np.abs(got[nz] - want[nz]) / want[nz]
+        assert rel.max() < 1e-15, rel.max()
+
+
+@pytest.mark.parametrize("interp", ["none", "pchip"])
+def test_extended_component_is_samplable_at_the_expected_rate(interp):
+    """sample() needs no special case, and the draw rate above 25.5 is the
+    extension's mass fraction — which is what makes extended mode
+    gate-eligible (the D-14 clamp raises here instead)."""
+    neo, other = Digest2Histogram.neo_other_pair(
+        MODEL_PATH, "All", h_extend_to=H_EXT, h_interpolation=interp
+    )
+    for c in (neo, other):
+        base = Digest2Histogram.neo_other_pair(
+            MODEL_PATH, "All", h_interpolation=interp
+        )[0 if c.label == "NEO" else 1]
+        expect = 1.0 - base.total_count / c.total_count
+        n = 400_000
+        el6, h = c.sample(n, np.random.default_rng(4242))
+        assert h.shape == (n,)
+        assert np.all(h >= 0.0) and np.all(h < H_EXT)
+        frac = float(np.mean(h >= H_TOP_REF))
+        # binomial sigma at n = 4e5 is <= 8e-4; 5 sigma
+        assert abs(frac - expect) < 4e-3, (c.label, frac, expect)
+        if c.label == "NEO":
+            assert expect == pytest.approx(0.6261, abs=1e-3)
+    # and the clamp still refuses, so the two modes cannot be confused
+    clamped = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+                                              h_top_bin_infinite=True)[0]
+    with pytest.raises(NotImplementedError, match="h_top_bin_infinite"):
+        clamped.sample(1, np.random.default_rng(0))
+
+
+def test_extended_sample_histogram_reproduces_the_extended_model():
+    """The §4.1 generator property, on the extended support: sampled H bins
+    converge to the extended counts, synthetic bin included."""
+    neo = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+                                          h_extend_to=H_EXT)[0]
+    n = 600_000
+    el6, h = neo.sample(n, np.random.default_rng(31337))
+    edges = np.asarray(neo.h_edges)
+    obs, _ = np.histogram(h, bins=edges)
+    want = np.asarray(neo.counts).sum(axis=(0, 1, 2))
+    want = want / want.sum() * n
+    # Only bins with a meaningful expectation; Poisson 5 sigma.
+    m = want > 200
+    assert m.sum() >= 6
+    assert np.all(np.abs(obs[m] - want[m]) < 5.0 * np.sqrt(want[m]))
+    assert obs[-1] > 0  # the synthetic bin is drawn from

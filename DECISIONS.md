@@ -343,3 +343,54 @@ machinery all confirmed) but found the D-17 evidence record needed corrections:
    *implementation* physically landed in commit 3db9ef3 ("PyPI packaging"), while
    5ed64e4 carries the study driver and report. History is pushed and stands; auditors
    should look in 3db9ef3 for the code diff.
+
+## D-19: Finite H extension (h_extend_to) and the fully-truncated triage policy (2026-09-02)
+
+**Decision (1) — finite extension.** `Digest2Histogram(h_extend_to=30.0)` appends a
+synthetic H bin [25.5, h_extend_to) per (q,e,i) cell carrying the flat continuation of
+the top bin's per-unit-H density (digest2's implicit assumption, made finite), hard zero
+above. Unlike the D-14 clamp it is a normalizable population: `sample()` works, so
+extended mode is **gate-eligible** (first extended-mode gate: OVERALL PASS,
+ĉ = 1.134 [0.803, 1.601]), and it composes with D-17 pchip (one more cumulative knot;
+mass-conserving; note the extra knot changes the [24, 25.5) pchip curve pointwise by up
+to 250% while preserving its mass exactly). Scoring is clamp-equivalent below the new
+wall (extended−clamped median exactly 0, max 3×10⁻⁵ on 20k; median 0, max 8.6×10⁻⁶ on
+the 499 real tracklets). **This supersedes the D-14 clamp as the operational
+configuration** (D-18(b) is superseded accordingly); the clamp survives only as the
+digest2-emulation mode for same-inputs comparisons, and remains mutually exclusive with
+both h_extend_to and pchip.
+
+**Why 30 and not the reachable ~34** (review-affirmed): 30 is the *validated* reach —
+on the 11 real wall tracklets the residual truncation (4/11 keep 7–10% of measure above
+30, max implied H 30.9) is invisible in the output (Λ_other = 0 there regardless, so
+p_neo is unchanged); extending to 34 would inflate the NEO total ×6.7, making ~85% of
+NEO mass pure extrapolation of one bin. The flat-continuation law is scale-free — 30 is
+a judgment about how far to extrapolate, not a measurement — and the machinery is
+reach-agnostic if that judgment changes. Counts: NEO total ×2.675 (277,469 → 742,145),
+other ×1.042, mixture P(NEO) 1.91% → 4.75%.
+
+**Decision (2) — triage policy for fully-truncated tracklets** (maintainer decision).
+When the admissible region is non-empty, both Λ are exactly zero, at least one node has
+finite implied H, and **the finite-H measure fraction at/above the support end is
+≥ 0.95** (the mechanism-gated condition; not merely "both Λ = 0", which the review
+showed also occurs for bright/slow objects inside the support and must keep returning
+nan with status "both_zero"), the classifier assigns **p_neo = 1.0 as an explicit triage policy**: status
+"fully_truncated_flagged", policy_assigned=True, log_lr = nan, warning naming it a
+policy, implemented once in shared post-processing so backends cannot diverge.
+Empirical basis: 11/11 fully-truncated real NEOCP tracklets were true NEOs (fast + faint
+⇒ close ⇒ small). The 0.95 threshold sits in a measured total-separation gap — the 11 wall
+tracklets have fractions ≥ 0.9856 (5 of them below 1.0 only via slivers of nodes at
+H 25.4–25.5 in empty cells, which a strict all-nodes rule would wrongly exclude), while
+every constructed false-positive class sits at exactly 0 — and a unit test pins it
+inside (0, 0.9856]. This is an operational assignment, not a posterior — accordingly,
+**policy rows are excluded from the gate's reliability inputs** (measured: ~34 correct
+policy rows would make one of five bins vacuous) and do not count as likelihood-defined
+scores; the harness reports undefined / policy-assigned / likelihood-defined as three
+distinct counts. With h_extend_to = 30 the policy is a rare residual (0 occurrences on
+all synthetic catalogues; it exists for real tracklets beyond the extended wall).
+
+**Supersessions.** D-18(b) (clamped pair for NEOCP-like operation) → use the extended
+pair. D-17/D-18 erratum item 5 ("pchip inherits D-4's 0/0 failure"; "pchip cannot be
+the NEOCP operational configuration") → superseded: extension+pchip composes and is
+operationally eligible; there is no 0/0 nan any more for genuinely fully-truncated
+tracklets (policy) and the extension covers the measured H range.

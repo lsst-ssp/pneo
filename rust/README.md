@@ -257,5 +257,30 @@ Golden A/B against the stored `gate_v0` scores, all 20 000 tracklets
 | `n_nodes` | identical | exact |
 | `n_masked_nonfinite` | identical (0 everywhere) | exact |
 | `n_masked_det` | identical (397 900 / 8.0e8 nodes) | — |
+| `status` | identical | exact |
+| `log_lr` (NaN-aware) | identical NaN/±inf pattern | 1e-5 rel |
 
 Reproduce with `python3 rust/bench.py` and `python3 validation/backend_parity.py`.
+
+### Result fields the kernel returns
+
+`classify_core` / `classify_batch` hand back a dict of `lambda_neo`,
+`lambda_other`, `n_nodes`, `n_masked_nonfinite`, `n_masked_det`,
+`n_h_at_or_above_support`, plus the seven per-node arrays when
+`diagnostics=True` (`None` otherwise).
+
+`n_h_at_or_above_support` is the **D-19 mechanism counter**: of the
+`n_nodes - n_masked_nonfinite` nodes with finite elements and finite implied H,
+how many lie at or above the pair's H support end (`+inf` for a D-14 clamped
+pair, `h_extend_to` under D-19, else 25.5). It exists so that
+`digest42.classifier._posterior` can tell *why* a 0/0 outcome happened without
+the per-node arrays, i.e. in `diagnostics=False` mode. Zero density over a
+non-empty region has several causes and only the faint-end one licenses the
+D-19 triage score; see `_fully_truncated_in_H`.
+
+`digest42.backend` turns the dict into a `ClassificationResult`, which since
+D-19 also carries `status` (`"ok"`, `"fully_truncated_flagged"`,
+`"empty_region"`, `"both_zero"`, `"overflow"`, `"nan"`) and the derived
+`policy_assigned` flag. Both are produced by the shared post-processing in
+`digest42.classifier`, so they are identical between the backends by
+construction, and `validation/backend_parity.py` compares them.
