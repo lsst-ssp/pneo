@@ -81,6 +81,29 @@ This satisfies D-2 / DESIGN §2.4.
 2. digest2's ``qeiToBin`` loop also puts *negative* q, e or i into bin 0
    (``x >= part[0]`` is false).  We return 0 there: the declared support
    starts at 0 in every dimension and negative q/e/i/H are unphysical.
+
+**The digest2-emulation knob (WP7 addendum).**  Deviation 1 is the only place
+where the two codes consume *different* effective models on identical inputs,
+which breaks the DESIGN §4.2 "same inputs" premise for any tracklet with
+appreciable admissible-region measure at implied H > 25.5 (64.5% of the
+gate_v0 catalogue at the > 1e-2 threshold).  To turn that confound into a
+measurement, :class:`Digest2Histogram` takes ``h_top_bin_infinite=True``,
+which reinstates digest2's clamp for the **upper** half of deviation 1 only:
+H >= 25.5 returns the top bin's density (per unit H, the value unchanged)
+instead of 0.  Everything else — q/e/i truncation, and H < 0 — is untouched.
+
+The *lower* half of digest2's clamp is deliberately NOT emulated: digest2's
+``for (ih = 0; h >= hpart[ih] && ih < HX - 1; ++ih)`` also leaves negative H
+in bin 0, so digest2 treats the first H bin as (-inf, 6).  Implied H < 0 means
+an object brighter than absolute magnitude 0 — at the geometries digest42
+integrates over (rho >= 0.01 AU, V >= 14) that never occurs, so emulating it
+would change nothing measurable while making the comparison mode a
+two-sided deviation from D-4 instead of the one-sided one under study.
+``h_top_bin_infinite=True`` therefore still returns 0 for H < 0.
+
+Clamped components are a **comparison/emulation mode only, never a gate
+mode** — see the class docstring for why (the clamped density is not
+normalizable, so DESIGN §4.1 has no generative counterpart for it).
 """
 
 from __future__ import annotations
@@ -439,6 +462,28 @@ class Digest2Histogram(PopulationDensity):
     label : "NEO" or "other".
     variant : "All" or "Unk".
     classes : human-readable description of the class aggregation used.
+    h_top_bin_infinite : whether the top H bin is treated as [24, inf)
+        (digest2-emulation mode) rather than [24, 25.5) (D-4 default).
+
+    digest2-emulation mode (``h_top_bin_infinite=True``)
+    ----------------------------------------------------
+    Reinstates ``d2model.c:hToBin``'s clamp of H >= 24 into the final bin, so
+    that H >= 25.5 evaluates to the top bin's density (per unit H, unchanged)
+    instead of 0.  This exists to make the DESIGN §4.2 head-to-head a
+    controlled experiment: with the clamp on, digest2 and digest42 consume the
+    *same* effective model on every tracklet, so the residual gap is method
+    alone.  See the module docstring for exactly which half of digest2's clamp
+    is emulated (the H >= 25.5 half) and which is not (H < 0).
+
+    .. warning::
+       **A clamped component is gate-ineligible.**  The clamped density is
+       constant in H above 25.5 and therefore has infinite integral: it is not
+       a normalizable prior, it has no finite total count, and no population
+       can be drawn from it.  The DESIGN §4.1 self-consistency logic — score a
+       catalogue drawn from the same density that the classifier assumes — has
+       no generative counterpart here, so :meth:`sample` raises and clamped
+       components must never be fed to the WP6 gate harness.  Use them only
+       for method comparison against digest2.
     """
 
     parameterization = "qei"
@@ -451,6 +496,7 @@ class Digest2Histogram(PopulationDensity):
         variant: str = "All",
         classes: str = "SS",
         interpolate: bool = False,
+        h_top_bin_infinite: bool = False,
     ):
         """Build a histogram density from absolute per-bin object counts.
 
@@ -464,6 +510,12 @@ class Digest2Histogram(PopulationDensity):
         variant : "All" or "Unk", carried for provenance.
         classes : provenance string describing the class aggregation.
         interpolate : must be False; interpolation is not implemented [D-10].
+        h_top_bin_infinite : digest2-emulation mode.  False (default) is D-4:
+            the top H bin is [24, 25.5) and the density is 0 above it.  True
+            reinstates digest2's ``hToBin`` clamp, making it [24, inf).  The
+            resulting density is non-normalizable and the component is
+            **gate-ineligible** (:meth:`sample` raises); see the class
+            docstring.
         """
         if interpolate:
             raise NotImplementedError(
@@ -485,6 +537,7 @@ class Digest2Histogram(PopulationDensity):
         self.label = str(label)
         self.variant = str(variant)
         self.classes = str(classes)
+        self.h_top_bin_infinite = bool(h_top_bin_infinite)
 
         self.q_edges = Q_EDGES
         self.e_edges = E_EDGES
@@ -504,7 +557,8 @@ class Digest2Histogram(PopulationDensity):
 
     @classmethod
     def neo_other_pair(
-        cls, path: str, variant: str = "All"
+        cls, path: str, variant: str = "All", *,
+        h_top_bin_infinite: bool = False,
     ) -> tuple["Digest2Histogram", "Digest2Histogram"]:
         """Load the model file and return (neo, other) components.
 
@@ -512,6 +566,13 @@ class Digest2Histogram(PopulationDensity):
         aggregated. The two must be exactly complementary at q = 1.3 AU
         (WP4 acceptance). variant: "All" (total population) or "Unk"
         (undiscovered = total - known) [D-10].
+
+        ``h_top_bin_infinite`` is passed to both components: True builds the
+        digest2-emulation pair whose top H bin is [24, inf) — a comparison
+        mode only, never a gate mode (see the class docstring).  Both sides
+        must be clamped together; a mixed pair would compare a truncated NEO
+        density against a clamped "other" density and the resulting posterior
+        would be an artifact of the mismatch.
 
         Implementation note: digest2's named classes overlap and do not cover
         the model (module docstring), so "all remaining classes" is realised
@@ -535,8 +596,10 @@ class Digest2Histogram(PopulationDensity):
         other = np.clip(other, 0.0, None)
 
         return (
-            cls(neo, "NEO", variant=variant, classes="NEO"),
-            cls(other, "other", variant=variant, classes="SS - NEO"),
+            cls(neo, "NEO", variant=variant, classes="NEO",
+                h_top_bin_infinite=h_top_bin_infinite),
+            cls(other, "other", variant=variant, classes="SS - NEO",
+                h_top_bin_infinite=h_top_bin_infinite),
         )
 
     @classmethod
@@ -548,6 +611,7 @@ class Digest2Histogram(PopulationDensity):
         variant: str = "All",
         *,
         subtract=(),
+        h_top_bin_infinite: bool = False,
     ) -> "Digest2Histogram":
         """Aggregate named digest2 classes into one component (diagnostics).
 
@@ -555,6 +619,9 @@ class Digest2Histogram(PopulationDensity):
         ``("SS",) + D2_CLASSES``.  Because the named classes overlap, summing
         several of them double-counts; this is a diagnostic entry point, not
         the way the NEO/other pair is built (use :meth:`neo_other_pair`).
+
+        ``h_top_bin_infinite`` selects the digest2-emulation top H bin
+        [24, inf) (comparison mode only; see the class docstring).
         """
         _check_variant(variant)
         tables = read_digest2_model(path)
@@ -571,9 +638,28 @@ class Digest2Histogram(PopulationDensity):
         desc = " + ".join(classes)
         if subtract:
             desc += " - " + " - ".join(subtract)
-        return cls(counts, label, variant=variant, classes=desc)
+        return cls(counts, label, variant=variant, classes=desc,
+                   h_top_bin_infinite=h_top_bin_infinite)
 
     # -- interface ---------------------------------------------------------
+
+    def _h_bin(self, h: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(H bin index, in-support mask) honouring ``h_top_bin_infinite``.
+
+        Single source of the H lookup rule for :meth:`density` and
+        :meth:`bin_indices`, so the two cannot disagree about which H values
+        the component actually evaluates.
+        """
+        ih, ok_h = _bin_index(self.h_edges, h)
+        if self.h_top_bin_infinite:
+            # digest2's hToBin clamp, upper half only: H >= 25.5 -> top bin.
+            # ``h >= 25.5`` is False for nan (so nan stays out of support) and
+            # True for +inf (which is what digest2's loop does with it).  H < 0
+            # is deliberately left out of support; see the module docstring.
+            above = h >= self.h_edges[-1]
+            ih = np.where(above, len(self.h_edges) - 2, ih)
+            ok_h = ok_h | above
+        return ih, ok_h
 
     def density(self, elements3: np.ndarray, H: np.ndarray) -> np.ndarray:
         """Piecewise-constant number density; see PopulationDensity.density.
@@ -582,6 +668,13 @@ class Digest2Histogram(PopulationDensity):
         [mag].  Units of the result: objects / (AU * rad^4 * mag), i.e. per
         unit q x e x i x Omega x omega x M x H with the 1/(2 pi)^3 uniform-
         angle factor included.  Exactly 0.0 outside the support [D-4].
+
+        With ``h_top_bin_infinite=True`` the sole change is that H >= 25.5
+        evaluates to the [24, 25.5) bin's density instead of 0 (digest2's
+        ``hToBin`` clamp; ``H = +inf`` clamps too, ``H = nan`` does not).
+        q, e, i truncation and H < 0 are bit-identical between the two modes,
+        as is every H in [0, 25.5): the clamp only ever *adds* the H >= 25.5
+        branch, it never touches the in-range lookup.
         """
         elements3 = np.asarray(elements3, dtype=float)
         if elements3.ndim == 0 or elements3.shape[-1] != 3:
@@ -597,7 +690,7 @@ class Digest2Histogram(PopulationDensity):
         iq, ok_q = _bin_index(self.q_edges, q)
         ie, ok_e = _bin_index(self.e_edges, ecc)
         ii, ok_i = _bin_index(self.i_edges, inc)
-        ih, ok_h = _bin_index(self.h_edges, h)
+        ih, ok_h = self._h_bin(h)
         ok = ok_q & ok_e & ok_i & ok_h
 
         out = np.zeros(q.shape, dtype=float)
@@ -635,7 +728,24 @@ class Digest2Histogram(PopulationDensity):
         NEO component and only ~1e-5 of the "other" component, i.e. it
         changes the components' relative normalization by ~2 % if it is
         silently dropped from one side only.
+
+        Raises NotImplementedError when ``h_top_bin_infinite=True``: a clamped
+        component is not a probability distribution, so there is nothing to
+        draw from (see the class docstring).
         """
+        if self.h_top_bin_infinite:
+            raise NotImplementedError(
+                "cannot sample a Digest2Histogram built with "
+                "h_top_bin_infinite=True: with the top H bin treated as "
+                "[24, inf) the density is constant in H above 25.5, so its "
+                "integral diverges and it is not a normalizable probability "
+                "distribution — there is no population it describes. The "
+                "clamp is a digest2-emulation mode for method comparison "
+                "(DESIGN §4.2) and is gate-ineligible: the §4.1 "
+                "self-consistency test has no generative counterpart for it. "
+                "Build the component with the default "
+                "h_top_bin_infinite=False to sample."
+            )
         n = int(n)
         if n < 0:
             raise ValueError("n must be non-negative")
@@ -685,19 +795,45 @@ class Digest2Histogram(PopulationDensity):
 
     @property
     def support(self) -> dict[str, tuple[float, float]]:
-        """Declared support (D-4): q [AU], e [-], i [rad], H [mag]."""
+        """Declared support (D-4): q [AU], e [-], i [rad], H [mag].
+
+        In digest2-emulation mode (``h_top_bin_infinite=True``) the H upper
+        bound is ``inf``, because that is where the density is actually
+        non-zero.  Reporting 25.5 there would mislabel every downstream
+        diagnostic that asks the component where its support ends — notably
+        the DESIGN §2.6(b) "measure above H_max^model" flag, which would
+        otherwise flag as truncation-exposed exactly the nodes the clamped
+        component evaluates normally.
+        """
+        h_hi = (
+            float("inf") if self.h_top_bin_infinite else float(self.h_edges[-1])
+        )
         return {
             "q": (float(self.q_edges[0]), float(self.q_edges[-1])),
             "e": (float(self.e_edges[0]), float(self.e_edges[-1])),
             "i": (float(self.i_edges[0]), float(self.i_edges[-1])),
-            "H": (float(self.h_edges[0]), float(self.h_edges[-1])),
+            "H": (float(self.h_edges[0]), h_hi),
         }
 
     @property
     def total_count(self) -> float:
-        """Total number of objects in this component (integral of the density
-        over its support and the uniform angles). WP4 acceptance: reproduces
-        the file's per-class totals."""
+        """Total object count over the binned [0, 25.5) H range.
+
+        Equals the integral of the density over its support and the uniform
+        angles in the default (D-4) mode; WP4 acceptance: reproduces the
+        file's per-class totals.
+
+        .. warning::
+           In digest2-emulation mode (``h_top_bin_infinite=True``) this is
+           **not** the integral of the density.  The clamped density is
+           constant in H above 25.5, so its integral diverges; the value
+           returned here is still the finite [0, 25.5) bin sum, i.e. the count
+           of the underlying histogram, unchanged by the clamp.  It is
+           reported for provenance (and so that the two modes' calibration can
+           be compared against the same number); it must not be read as this
+           component's total population, and the mixture fraction built from
+           it is not the clamped model's mixture fraction.
+        """
         return self._total_count
 
     @property
@@ -720,6 +856,10 @@ class Digest2Histogram(PopulationDensity):
            ``in_support`` flag before using them; histogramming without the
            mask silently piles out-of-support points onto the edge bins.
            :meth:`density` applies the mask for you and returns 0.0 there.
+
+        ``in_support`` follows ``h_top_bin_infinite``: in digest2-emulation
+        mode H >= 25.5 is *in* support and carries ``ih = 17``, matching what
+        :meth:`density` evaluates there.
         """
         elements3 = np.asarray(elements3, dtype=float)
         if elements3.ndim == 0 or elements3.shape[-1] != 3:
@@ -734,11 +874,15 @@ class Digest2Histogram(PopulationDensity):
         iq, ok_q = _bin_index(self.q_edges, q)
         ie, ok_e = _bin_index(self.e_edges, ecc)
         ii, ok_i = _bin_index(self.i_edges, inc)
-        ih, ok_h = _bin_index(self.h_edges, h)
+        ih, ok_h = self._h_bin(h)
         return iq, ie, ii, ih, ok_q & ok_e & ok_i & ok_h
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        clamp = (
+            ", h_top_bin_infinite=True" if self.h_top_bin_infinite else ""
+        )
         return (
             f"Digest2Histogram(label={self.label!r}, variant={self.variant!r}, "
-            f"classes={self.classes!r}, total_count={self.total_count:.0f})"
+            f"classes={self.classes!r}, total_count={self.total_count:.0f}"
+            f"{clamp})"
         )

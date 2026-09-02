@@ -927,3 +927,222 @@ def test_read_rejects_incomplete_file(tmp_path):
     p.write_text("".join(head))
     with pytest.raises(ValueError, match="missing"):
         read_digest2_model(p)
+
+
+# ---------------------------------------------------------------------------
+# WP7 addendum — the digest2-emulation knob (h_top_bin_infinite)
+#
+# digest2's ``hToBin`` clamps every H >= 24 into the final bin, i.e. it treats
+# the top H bin as [24, inf); digest42 truncates at 25.5 per D-4.  The knob
+# reinstates digest2's clamp so that the DESIGN §4.2 head-to-head can be run
+# with the two codes consuming genuinely identical effective models.  These
+# tests pin down: what changes (H >= 25.5 only), what does not (everything
+# else, bit-for-bit), and the guard rails that keep the mode out of the gate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pair_all_clamped():
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="All",
+                                           h_top_bin_infinite=True)
+
+
+@pytest.fixture(scope="module")
+def pair_unk_clamped():
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="Unk",
+                                           h_top_bin_infinite=True)
+
+
+#: (component index, name) — both components of the pair get tested.
+_COMPS = [(0, "NEO"), (1, "other")]
+
+
+def _top_h_bin_density(comp):
+    """(elements at a populated top-H-bin centre, that bin's density value)."""
+    idx = populated_bin(comp, ih=len(REF_HPART) - 1)
+    el, _h = bin_centre(comp, idx)
+    # The bin's own density value, taken from the [24, 25.5) evaluation, which
+    # both modes agree on.
+    return el, float(comp.density(el, 24.5))
+
+
+@pytest.mark.parametrize("variant", ["All", "Unk"])
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_top_bin_extends_to_infinity(variant, comp_index, name,
+                                             pair_all, pair_unk,
+                                             pair_all_clamped,
+                                             pair_unk_clamped):
+    """H = 25.5-eps, 25.5, 26, 30: clamped keeps the top-bin value, the
+    default returns 0 for the last three."""
+    plain = (pair_all if variant == "All" else pair_unk)[comp_index]
+    clamped = (pair_all_clamped if variant == "All"
+               else pair_unk_clamped)[comp_index]
+    assert plain.label == clamped.label == name
+
+    el, top = _top_h_bin_density(plain)
+    assert top > 0.0
+    # ...and the clamped component agrees with it inside the bin.
+    assert float(clamped.density(el, 24.5)) == top
+
+    below = np.nextafter(25.5, 0.0)          # 25.5 - eps
+    assert float(plain.density(el, below)) == top
+    assert float(clamped.density(el, below)) == top
+
+    for h in (25.5, 26.0, 30.0):
+        assert float(plain.density(el, h)) == 0.0
+        assert float(clamped.density(el, h)) == top, f"H = {h}"
+
+    # The value is a density *per unit H* and the clamp does not rescale it.
+    assert float(clamped.density(el, 1e4)) == top
+    assert float(clamped.density(el, np.inf)) == top
+    # nan is not a magnitude, in either mode.
+    assert float(clamped.density(el, np.nan)) == 0.0
+    assert float(plain.density(el, np.nan)) == 0.0
+
+
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_does_not_emulate_the_negative_H_half_of_the_clamp(
+    pair_all, pair_all_clamped, comp_index, name
+):
+    """digest2 also puts H < 0 in bin 0; we deliberately do not (module
+    docstring).  The clamp is one-sided."""
+    plain = pair_all[comp_index]
+    clamped = pair_all_clamped[comp_index]
+    el, _ = _top_h_bin_density(plain)
+    for h in (-1e-9, -1.0, -30.0):
+        assert float(clamped.density(el, h)) == 0.0
+        assert float(plain.density(el, h)) == 0.0
+    import digest42.population as _pop
+    assert "deliberately NOT emulated" in _pop.__doc__
+
+
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_and_plain_are_bit_identical_below_25p5(
+    pair_all, pair_all_clamped, comp_index, name
+):
+    """Random sweep over the whole (q, e, i) box with H < 25.5: the two modes
+    must return the *same float*, not merely a close one.  This is what makes
+    the clamped-vs-unclamped score difference attributable to the top bin."""
+    plain = pair_all[comp_index]
+    clamped = pair_all_clamped[comp_index]
+    rng = np.random.default_rng(20260901)
+    n = 200_000
+    # Spread beyond the support on every axis so the truncation branches are
+    # exercised too (negative values, above the top edge, nan).
+    # Most of the model's mass sits at q < 6 AU and i < 35 deg, so a sweep
+    # uniform over the whole box would land almost entirely in empty bins;
+    # concentrate 90% of the draws where the counts are and send the rest out
+    # to the far corners.
+    q = np.where(rng.random(n) < 0.9,
+                 rng.uniform(-0.2, 6.0, n), rng.uniform(-1.0, 110.0, n))
+    e = rng.uniform(-0.05, 1.2, n)
+    i = np.where(rng.random(n) < 0.9,
+                 rng.uniform(-0.02, 0.6, n),
+                 rng.uniform(-0.05, np.pi + 0.05, n))
+    h = rng.uniform(-2.0, 25.5, n)
+    h[rng.random(n) < 0.01] = np.nan
+    q[rng.random(n) < 0.01] = np.nan
+    el = np.stack([q, e, i], axis=-1)
+
+    a = plain.density(el, h)
+    b = clamped.density(el, h)
+    assert np.array_equal(a, b)                     # bit-for-bit, nan-free
+    # The NEO component covers only q < 1.3 AU, so its hit rate is a few
+    # percent; a thousand non-zero evaluations is ample evidence that the
+    # sweep exercises the lookup rather than just the truncation branches.
+    assert (a > 0).sum() > 1000                     # the sweep hits the model
+    assert (a == 0.0).sum() > 0.05 * n              # ...and the truncations
+
+    # And the bin lookup agrees too, below 25.5.
+    ia = plain.bin_indices(el, h)
+    ib = clamped.bin_indices(el, h)
+    for x, y in zip(ia, ib):
+        assert np.array_equal(x, y)
+
+
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_sweep_above_25p5_is_the_top_bin(pair_all, pair_all_clamped,
+                                                 comp_index, name):
+    """Above 25.5 the clamped density equals the same (q, e, i) evaluated in
+    the top H bin — for every point, not just the one hand-picked bin."""
+    plain = pair_all[comp_index]
+    clamped = pair_all_clamped[comp_index]
+    rng = np.random.default_rng(4242)
+    n = 50_000
+    q = rng.uniform(0.0, 100.0, n)
+    e = rng.uniform(0.0, 1.1, n)
+    i = rng.uniform(0.0, np.pi, n)
+    el = np.stack([q, e, i], axis=-1)
+    h_hi = rng.uniform(25.5, 60.0, n)
+    ref = plain.density(el, np.full(n, 24.75))      # inside [24, 25.5)
+    assert np.array_equal(clamped.density(el, h_hi), ref)
+    assert np.all(plain.density(el, h_hi) == 0.0)
+    assert (ref > 0).any()
+
+
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_support_reports_infinite_H(pair_all, pair_all_clamped,
+                                            comp_index, name):
+    plain = pair_all[comp_index]
+    clamped = pair_all_clamped[comp_index]
+    assert plain.support["H"] == (0.0, 25.5)
+    assert clamped.support["H"] == (0.0, float("inf"))
+    # every other axis is untouched
+    for axis in ("q", "e", "i"):
+        assert clamped.support[axis] == plain.support[axis]
+    assert plain.h_top_bin_infinite is False
+    assert clamped.h_top_bin_infinite is True
+
+
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_sample_raises(pair_all_clamped, comp_index, name):
+    comp = pair_all_clamped[comp_index]
+    with pytest.raises(NotImplementedError, match="h_top_bin_infinite"):
+        comp.sample(10, np.random.default_rng(0))
+    with pytest.raises(NotImplementedError) as exc:
+        comp.sample(0, np.random.default_rng(0))     # not even the n == 0 path
+    msg = str(exc.value)
+    assert "diverges" in msg and "gate-ineligible" in msg
+
+
+@pytest.mark.parametrize("comp_index, name", _COMPS)
+def test_clamped_total_count_is_the_finite_bin_sum_and_says_so(
+    pair_all, pair_all_clamped, comp_index, name
+):
+    plain = pair_all[comp_index]
+    clamped = pair_all_clamped[comp_index]
+    assert clamped.total_count == plain.total_count
+    assert clamped.total_count == pytest.approx(float(clamped.counts.sum()))
+    doc = Digest2Histogram.total_count.__doc__
+    assert "not** the integral" in doc or "not the integral" in doc
+    assert "diverges" in doc
+
+
+def test_clamped_flag_passes_through_the_factories():
+    """neo_other_pair and from_classes must both carry the flag, and
+    neo_other_pair must clamp BOTH components (a mixed pair is meaningless)."""
+    for variant in D2_VARIANTS:
+        pair = Digest2Histogram.neo_other_pair(MODEL_PATH, variant,
+                                               h_top_bin_infinite=True)
+        assert [c.h_top_bin_infinite for c in pair] == [True, True]
+        assert [c.label for c in pair] == ["NEO", "other"]
+        assert [c.variant for c in pair] == [variant, variant]
+        default = Digest2Histogram.neo_other_pair(MODEL_PATH, variant)
+        assert [c.h_top_bin_infinite for c in default] == [False, False]
+
+    c = Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+                                      h_top_bin_infinite=True)
+    assert c.h_top_bin_infinite is True
+    assert Digest2Histogram.from_classes(
+        MODEL_PATH, ["MB1"], "other"
+    ).h_top_bin_infinite is False
+    assert "h_top_bin_infinite=True" in repr(c)
+
+
+def test_clamped_mode_is_documented_as_gate_ineligible():
+    """A comparison mode that leaked into the gate would silently invalidate
+    DESIGN §4.1; the class docstring must say so in as many words."""
+    doc = Digest2Histogram.__doc__
+    assert "gate-ineligible" in doc
+    assert "§4.1" in doc
+    assert "normalizable" in doc

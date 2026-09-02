@@ -186,3 +186,24 @@ by both the reviewer and implementer; they disagreed on the size at mid-p — 3.
 vs neutral — but agreed on the conclusion, and both measurements are recorded in the
 module docstring). Gate-mode sampling is the calibration test; enrichment probes the
 low-p tail.
+
+## D-14: digest2-emulation H-clamp knob (2026-09-02)
+
+**Decision.** `Digest2Histogram(h_top_bin_infinite=True)` reinstates digest2's clamp of
+the top H bin to [24, ∞) — H ≥ 25.5 evaluates to the top bin's density instead of D-4's
+zero. Emulation is one-sided (digest2's negative-H clamp is not emulated; unreachable at
+ρ ≥ 0.01 AU, V ≥ 14). Clamped components are non-normalizable: `sample()` raises, and
+the mode is gate-ineligible — comparison use only, both components clamped together.
+
+**Rationale.** Turns the WP7 same-inputs confound into a measurement. Results (gate_v0,
+20k): with the premise repaired everywhere, full-set ΔAUC = +0.0126 [+0.0048, +0.0217];
+the broken-subset WP7 gap decomposes as +0.0109 method − 0.0021 boundary handling (D-4's
+truncation was mildly *handicapping* digest42 there — WP7's number was conservative);
+and the clamp explains ~0.01% of digest2's 6.1× calibration overshoot (a correctly
+marginalized posterior absorbs the prior's faint-end change: predicted NEOs 187.6
+clamped vs 187.5 truncated vs 185 observed). See
+validation/DIGEST2_COMPARISON_CLAMPED.md.
+
+**Alternatives.** Leaving D-4 truncation as the only mode (keeps the confound
+unmeasured); two-sided emulation including negative-H (rejected: changes nothing
+measurable while doubling the deviation from D-4).
