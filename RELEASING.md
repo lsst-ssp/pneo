@@ -1,7 +1,9 @@
 # Releasing digest42
 
 `digest42` is published to PyPI by `.github/workflows/release.yml`, triggered by
-a **published GitHub release** whose tag is `v<version>`. Publishing uses PyPI
+**pushing a tag matching `vX.Y.Z`** — `git push origin v0.1.0` is the release
+action; no GitHub Release object is required (create one afterward for notes if
+you like; it does not re-trigger the workflow). Publishing uses PyPI
 **Trusted Publishing** (OIDC): there is no API token in this repository, its
 secrets, or anyone's keychain.
 
@@ -71,9 +73,10 @@ platform × interpreter, and a new Python release needs no new wheel.
    git tag -a v0.1.0 -m "digest42 0.1.0"
    git push origin main --follow-tags
    ```
-5. **Publish a GitHub release** on that tag (`gh release create v0.1.0
-   --generate-notes`, or the web UI). Publishing — not creating a draft — is
-   what fires the workflow.
+5. **The tag push in step 4 is the release** — the workflow fires on it
+   directly. Optionally add a GitHub release for human-readable notes
+   afterward (`gh release create v0.1.0 --generate-notes`); it does not
+   re-trigger the workflow.
 6. **Watch the run.** In order: `version-check` (~20 s, fails fast on a
    version/tag mismatch), `sdist` and `wheels` in parallel, then `smoke-test`
    (installs the linux wheel on 3.11 and 3.13) and `metadata` (the sdist and

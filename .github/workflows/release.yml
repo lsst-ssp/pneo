@@ -24,8 +24,13 @@ name: Release
 #     from the run page.  There is no TestPyPI leg by maintainer decision.
 
 on:
-  release:
-    types: [published]
+  # Pushing a version tag IS the release action: `git tag v0.1.0 && git push
+  # --tags` builds, smoke-tests, and publishes to PyPI with no further clicks.
+  # (A GitHub Release object can still be created afterward for notes; it does
+  # not re-trigger this workflow, so there is no double-publish path.)
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
 
 permissions:
@@ -34,7 +39,7 @@ permissions:
 concurrency:
   # Never cancel a release in flight; a half-uploaded index is worse than a
   # queued run.
-  group: release-${{ github.event.release.tag_name || github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -71,7 +76,8 @@ jobs:
         id: check
         env:
           # Never interpolate a tag name straight into a shell script.
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          # Empty on workflow_dispatch (branch ref) -> tag check is skipped.
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           python - <<'PY'
@@ -134,13 +140,13 @@ jobs:
                               f"pyo3's {abi3[0]}")
 
           tag = os.environ.get("RELEASE_TAG", "")
-          if os.environ["EVENT_NAME"] == "release":
-              print(f"release tag                          {tag}")
+          if tag:
+              print(f"pushed tag                           {tag}")
               if tag != f"v{version}":
-                  fail.append(f"release tag {tag!r} is not 'v{version}'; tag the "
-                              f"release v<version> or fix the version")
+                  fail.append(f"pushed tag {tag!r} is not 'v{version}'; tag "
+                              f"v<version> or fix the version first")
           else:
-              print("not a release event: tag check skipped")
+              print("not a tag push: tag check skipped (rehearsal)")
 
           if fail:
               for f in fail:
@@ -384,7 +390,7 @@ jobs:
   # ---------------------------------------------------------------------------
   publish-pypi:
     name: publish to PyPI
-    if: github.event_name == 'release'
+    if: github.ref_type == 'tag'
     needs: [version-check, sdist, wheels, smoke-test, metadata]
     runs-on: ubuntu-latest
     timeout-minutes: 20
