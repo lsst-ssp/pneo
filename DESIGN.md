@@ -222,6 +222,18 @@ an outer marginalization over the astrometric/photometric error distribution (si
 or MC). The public API therefore takes the attributable as a distribution from day one;
 v0 implements the delta-function case [D-6].
 
+**Measured impact at Rubin precision (2026-09-02,
+[validation/ASTROMETRIC_NOISE.md](validation/ASTROMETRIC_NOISE.md)).** Injecting the
+Sorcha magnitude-dependent astrometric error model (10–85 mas/coordinate over V = 18–24)
+into both endpoints of the gate catalogue's tracklets at a 45-minute arc and re-scoring
+with the unmodified classifier changes essentially nothing: ĉ 0.923 → 0.925, ΔAUC
+consistent with zero, zero threshold crossings on 2×10⁴, per-tracklet score scatter
+> 0.01 for only 1% of tracklets (max 0.024 — faint, fast, mid-p). Rate errors carry
+100.0% of the induced variance, as expected above. **Conclusion: covariance
+marginalization is not urgent for 45-minute Rubin arcs; the binding variable is arc
+length** (rate error ∝ 1/dt: ×3 at 15 min, ×9 at 5 min — untested regimes). Photometric
+noise and prior mismatch (§4.3) are separate, larger questions.
+
 ## 3. Architecture
 
 Self-contained Python (numpy-vectorized); the two-body transforms and Jacobians are
