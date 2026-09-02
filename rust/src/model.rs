@@ -82,10 +82,15 @@ impl Histogram {
     ///
     /// Piecewise constant in q/e/i always; in H either the flat table lookup or
     /// one Horner evaluation of the precomputed monotone-cubic derivative.  The
-    /// four bin lookups are shared, so the two modes differ by exactly one
-    /// branch and three loads — the smooth mode costs one extra multiply-add
-    /// pair per node (measured wall-clock overhead in
-    /// `validation/output/h_interpolation/REPORT.md`).
+    /// four bin lookups are shared, so the two modes differ by one branch,
+    /// three contiguous loads instead of one, a subtraction and two
+    /// multiply-adds.  **Measured end-to-end cost of the smooth branch: +21%
+    /// to +28% single-core** (`validation/output/h_interpolation/REPORT.md`) —
+    /// much more than the three flops are worth, and attributable to the
+    /// coefficient table being 3x the size of the density table (2.2 MB vs
+    /// 0.74 MB for the pair), which pushes the working set out of L2.  Worth
+    /// knowing before anyone widens the stored form further; a variant that
+    /// stored the CDF's four coefficients would cost more again.
     #[inline(always)]
     pub fn density(&self, q: f64, e: f64, inc: f64, h: f64) -> f64 {
         let iq = match bin_index(&self.edges[0], q) {
