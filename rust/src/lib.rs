@@ -44,8 +44,10 @@ fn model_error(msg: String) -> PyErr {
     UnsupportedModel::new_err(msg)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hist_from_py(
     table: PyReadonlyArray1<f64>,
+    h_coeffs: Option<PyReadonlyArray1<f64>>,
     dims: (usize, usize, usize, usize),
     edges: &[Vec<f64>; 4],
     parameterization: &str,
@@ -98,10 +100,56 @@ fn hist_from_py(
             "density table for {label:?} must be finite and non-negative"
         )));
     }
+    let coeffs = match h_coeffs {
+        None => None,
+        Some(arr) => {
+            // The D-14 clamp and the smooth reconstruction are mutually
+            // exclusive on the Python side too (`Digest2Histogram.__init__`
+            // raises); repeated here so the kernel cannot be driven into a
+            // state the reference cannot express.
+            if h_top_bin_infinite {
+                return Err(model_error(format!(
+                    "component {label:?} supplies smooth-in-H coefficients and \
+                     h_top_bin_infinite=True; the D-14 clamp extends a constant \
+                     beyond the support and has no smooth analogue"
+                )));
+            }
+            // 3 coefficients per (cell, H bin).  Checked: on a hostile `dims`
+            // an unchecked 3*n could wrap and let a short array pass the length
+            // test, after which `density` would index past the end.
+            let n3 = n.checked_mul(3).ok_or_else(|| {
+                model_error(format!(
+                    "bin shape {dims:?} overflows: 3 coefficients per cell do \
+                     not fit in a usize"
+                ))
+            })?;
+            let c = arr.as_slice()?;
+            if c.len() != n3 {
+                return Err(model_error(format!(
+                    "h_coeffs for {label:?} has {} entries, expected {n3} \
+                     (3 per cell for shape {dims:?})",
+                    c.len()
+                )));
+            }
+            // Coefficients may legitimately be negative (b and c of a rising
+            // then flattening segment), so only finiteness is checkable here.
+            // Non-negativity is a property of the *polynomial on its own
+            // interval*, guaranteed by PCHIP's monotone slopes upstream and
+            // asserted by the Python unit tests, not re-derivable from the
+            // triples in isolation.
+            if !c.iter().all(|v| v.is_finite()) {
+                return Err(model_error(format!(
+                    "h_coeffs for {label:?} must be finite"
+                )));
+            }
+            Some(c.to_vec())
+        }
+    };
     Ok(Histogram {
         dims,
         edges: edges.clone(),
         table: t.to_vec(),
+        h_coeffs: coeffs,
         h_top_bin_infinite,
         qei,
         label: label.to_string(),
@@ -132,6 +180,12 @@ impl CoreModel {
     /// `_density_table` arrays flattened in C order, `*_edges` the shared
     /// `(q, e, i[rad], H)` bin edges, `*_parameterization` is `"qei"`/`"aei"`
     /// and `*_h_top_bin_infinite` selects the D-14 digest2-emulation clamp.
+    ///
+    /// `*_h_coeffs` are the optional smooth-in-H Horner coefficients
+    /// (`Digest2Histogram.h_coeffs` flattened C-order, 3 per (cell, H bin)).
+    /// When a component supplies them they *replace* its table inside
+    /// `density`; the table is still required and still validated, so a handle
+    /// always carries the piecewise-constant model that was reconstructed.
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
@@ -139,6 +193,7 @@ impl CoreModel {
         neo_parameterization="qei", other_parameterization="qei",
         neo_h_top_bin_infinite=false, other_h_top_bin_infinite=false,
         neo_label="NEO", other_label="other",
+        neo_h_coeffs=None, other_h_coeffs=None,
     ))]
     fn new(
         neo_table: PyReadonlyArray1<f64>,
@@ -154,6 +209,8 @@ impl CoreModel {
         other_h_top_bin_infinite: bool,
         neo_label: &str,
         other_label: &str,
+        neo_h_coeffs: Option<PyReadonlyArray1<f64>>,
+        other_h_coeffs: Option<PyReadonlyArray1<f64>>,
     ) -> PyResult<Self> {
         let edges = [
             q_edges.as_slice()?.to_vec(),
@@ -171,6 +228,7 @@ impl CoreModel {
         }
         let neo = hist_from_py(
             neo_table,
+            neo_h_coeffs,
             dims,
             &edges,
             neo_parameterization,
@@ -179,6 +237,7 @@ impl CoreModel {
         )?;
         let other = hist_from_py(
             other_table,
+            other_h_coeffs,
             dims,
             &edges,
             other_parameterization,
@@ -228,13 +287,17 @@ impl CoreModel {
 
     fn __repr__(&self) -> String {
         let n = &self.inner.neo;
+        let mode = |h: &Histogram| if h.h_coeffs.is_some() { "pchip" } else { "none" };
         format!(
-            "CoreModel(neo={:?}, other={:?}, dims={:?}, h_top_bin_infinite=({}, {}))",
+            "CoreModel(neo={:?}, other={:?}, dims={:?}, h_top_bin_infinite=({}, {}), \
+             h_interpolation=({:?}, {:?}))",
             n.label,
             self.inner.other.label,
             n.dims,
             n.h_top_bin_infinite,
             self.inner.other.h_top_bin_infinite,
+            mode(n),
+            mode(&self.inner.other),
         )
     }
 }

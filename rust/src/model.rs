@@ -12,6 +12,18 @@
 //! * with `h_top_bin_infinite` (D-14 digest2-emulation clamp) `H >= h_edges[-1]`
 //!   maps to the top H bin.  `+inf` clamps (it compares `>=`), `NaN` does not.
 //!   `H < 0` is deliberately left out of support in both modes.
+//!
+//! The smooth-in-H mode (`Digest2Histogram(h_interpolation="pchip")`) is carried
+//! as an optional per-interval coefficient array instead of the flat density
+//! table.  The coefficients are **not** recomputed here: Python precomputes them
+//! once (`Digest2Histogram.h_coeffs`, already divided by
+//! `dq de di (2 pi)^3`) and hands them over, and both sides evaluate the same
+//! Horner form `a + s (b + s c)` with `s = H - h_edges[ih]`.  Sharing the
+//! coefficients and fixing the grouping is what makes the two backends
+//! *bit-identical* rather than merely close: neither IEEE-754 double arithmetic
+//! nor numpy's ufunc-per-operation evaluation leaves any freedom in
+//! `a + s * (b + s * c)`, and LLVM does not fuse it into FMAs without
+//! fast-math (which this crate does not enable).
 
 /// One binned population component (a flattened `Digest2Histogram`).
 pub struct Histogram {
@@ -21,6 +33,10 @@ pub struct Histogram {
     pub edges: [Vec<f64>; 4],
     /// `Digest2Histogram._density_table` flattened C-order.
     pub table: Vec<f64>,
+    /// `Digest2Histogram.h_coeffs` flattened C-order (`3` per (cell, H bin)),
+    /// or `None` for the piecewise-constant mode.  When present it *replaces*
+    /// `table` in `density` — `table` is then carried for provenance only.
+    pub h_coeffs: Option<Vec<f64>>,
     /// D-14 clamp mode.
     pub h_top_bin_infinite: bool,
     /// `true` for parameterization "qei" (adds the `(1 - e)` Jacobian factor),
@@ -62,7 +78,14 @@ impl Histogram {
         bin_index(&self.edges[3], h)
     }
 
-    /// Piecewise-constant number density; exactly `0.0` outside the support.
+    /// Number density; exactly `0.0` outside the support.
+    ///
+    /// Piecewise constant in q/e/i always; in H either the flat table lookup or
+    /// one Horner evaluation of the precomputed monotone-cubic derivative.  The
+    /// four bin lookups are shared, so the two modes differ by exactly one
+    /// branch and three loads — the smooth mode costs one extra multiply-add
+    /// pair per node (measured wall-clock overhead in
+    /// `validation/output/h_interpolation/REPORT.md`).
     #[inline(always)]
     pub fn density(&self, q: f64, e: f64, inc: f64, h: f64) -> f64 {
         let iq = match bin_index(&self.edges[0], q) {
@@ -93,10 +116,28 @@ impl Histogram {
         // Python.  Measured cost: below the benchmark's noise floor (the
         // unchecked build came out 1% *slower*), because the four bin lookups
         // dominate and the branch is perfectly predicted.
-        self.table
-            .get(((iq * ne + ie) * ni + ii) * nh + ih)
-            .copied()
-            .unwrap_or(0.0)
+        let flat = ((iq * ne + ie) * ni + ii) * nh + ih;
+        match &self.h_coeffs {
+            None => self.table.get(flat).copied().unwrap_or(0.0),
+            Some(co) => {
+                // `flat * 3` cannot overflow: `CoreModel::new` verifies with
+                // `checked_mul` that 3 * nq*ne*ni*nh fits in a usize whenever
+                // coefficients are supplied, and `flat < nq*ne*ni*nh`.  The
+                // slice read is bounds-checked for the same reason as above.
+                match co.get(flat * 3..flat * 3 + 3) {
+                    None => 0.0,
+                    Some(c) => {
+                        // `ih` came from `bin_index`/`h_bin`, so
+                        // `edges[3][ih] <= h` and s >= 0; the bins are
+                        // half-open, so s stays below the interval width.
+                        // Exactly the Python expression, in exactly this
+                        // grouping — see the module header on bit-identity.
+                        let s = h - self.edges[3][ih];
+                        c[0] + s * (c[1] + s * c[2])
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -136,6 +177,7 @@ mod tests {
             dims: [1, 1, 1, 3],
             edges: [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0], edges()],
             table: vec![10.0, 20.0, 30.0],
+            h_coeffs: None,
             h_top_bin_infinite: false,
             qei: true,
             label: "t".into(),
@@ -166,6 +208,7 @@ mod tests {
                 vec![0.0, 1.0, 2.0, 3.0, 4.0],
             ],
             table: vec![1.0, 2.0],
+            h_coeffs: None,
             h_top_bin_infinite: false,
             qei: true,
             label: "short".into(),
@@ -174,5 +217,65 @@ mod tests {
         assert_eq!(hist.density(0.5, 0.5, 0.5, 1.5), 2.0);
         assert_eq!(hist.density(3.5, 3.5, 3.5, 3.5), 0.0);
         assert_eq!(hist.density(2.5, 1.5, 3.5, 0.5), 0.0);
+    }
+
+    /// The smooth-in-H branch: one Horner per lookup, D-4 truncation intact,
+    /// and a short coefficient array must degrade to 0.0 rather than read wild.
+    #[test]
+    fn pchip_branch_evaluates_the_horner_form() {
+        // Three H bins [0,1), [1,2), [2,3); coefficients chosen by hand.
+        let co = vec![
+            1.0, 2.0, 3.0, // bin 0: 1 + s(2 + 3s)
+            4.0, 0.0, 0.0, // bin 1: constant 4
+            0.0, 6.0, -6.0, // bin 2: s(6 - 6s)
+        ];
+        let hist = Histogram {
+            dims: [1, 1, 1, 3],
+            edges: [
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0, 2.0, 3.0],
+            ],
+            table: vec![10.0, 20.0, 30.0],
+            h_coeffs: Some(co),
+            h_top_bin_infinite: false,
+            qei: true,
+            label: "pchip".into(),
+        };
+        // s = h - edges[3][ih], so the SECOND bin evaluates at s = h - 1.
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 0.0), 1.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 0.5), 1.0 + 0.5 * (2.0 + 3.0 * 0.5));
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 1.0), 4.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 1.75), 4.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 2.5), 0.5 * (6.0 - 6.0 * 0.5));
+        // D-4: outside the support, still exactly zero, table or no table.
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 3.0), 0.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, -0.5), 0.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, f64::NAN), 0.0);
+        assert_eq!(hist.density(1.5, 0.5, 0.5, 0.5), 0.0);
+    }
+
+    #[test]
+    fn pchip_coeff_read_is_bounds_checked() {
+        let hist = Histogram {
+            dims: [1, 1, 1, 3],
+            edges: [
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0, 2.0, 3.0],
+            ],
+            table: vec![10.0, 20.0, 30.0],
+            // Only the first bin's triple is present; CoreModel::new rejects
+            // this, but the lookup must not depend on that.
+            h_coeffs: Some(vec![1.0, 0.0, 0.0]),
+            h_top_bin_infinite: false,
+            qei: true,
+            label: "short-pchip".into(),
+        };
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 0.5), 1.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 1.5), 0.0);
+        assert_eq!(hist.density(0.5, 0.5, 0.5, 2.5), 0.0);
     }
 }

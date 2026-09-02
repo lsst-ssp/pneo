@@ -1,0 +1,419 @@
+name: Release
+
+# Publishing digest42 to PyPI.  Two artifact kinds, built by two tools, for the
+# reasons written down in pyproject.toml and RELEASING.md:
+#
+#   * one **sdist**, built by setuptools -- the whole source, Rust crate
+#     included, but installing it compiles nothing and yields the numpy
+#     reference implementation.  That is the fallback for every platform below
+#     that has no wheel: `pip install digest42` works there and
+#     `backend="auto"` degrades to "python", which is exactly the runtime
+#     contract digest42 already has.
+#   * one **wheel per platform**, built by `maturin build` over the
+#     `[tool.maturin]` table -- the same Python package plus the compiled
+#     `digest42._core`.  abi3-py311 means one wheel covers CPython >= 3.11, so
+#     the matrix is per platform, not per platform x interpreter.
+#
+# Triggers:
+#   * a **published GitHub release**: builds, smoke-tests, then publishes to
+#     PyPI via Trusted Publishing (OIDC, no API token).  The tag must be
+#     `v<version>` -- enforced by the `version-check` job below, because the
+#     `release` event cannot be filtered on the tag pattern here.
+#   * **workflow_dispatch**: the same build and smoke test with no publish
+#     step at all, so a release can be rehearsed and the artifacts inspected
+#     from the run page.  There is no TestPyPI leg by maintainer decision.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a release in flight; a half-uploaded index is worse than a
+  # queued run.
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+  # matplotlib is a diagnostics-only dependency of the package; no display on a
+  # runner (see ci.yml).
+  MPLBACKEND: Agg
+  # Pinned deliberately: the wheel's platform tag and its stripped contents are
+  # properties of the maturin version, so it is part of the release recipe.
+  MATURIN_VERSION: v1.15.0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # One version string, four places.  This job is the "single source of truth"
+  # mechanism: pyproject.toml [project].version is the truth and the other three
+  # must agree with it.  It runs first and everything else needs it, so a
+  # mismatch costs one 20-second job instead of a yanked release.
+  # ---------------------------------------------------------------------------
+  version-check:
+    name: version consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: pyproject == __init__ == crate == tag, and abi3 floor == requires-python
+        id: check
+        env:
+          # Never interpolate a tag name straight into a shell script.
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import os, re, sys, tomllib
+
+          fail = []
+
+          with open("pyproject.toml", "rb") as fh:
+              pp = tomllib.load(fh)
+          version = pp["project"]["version"]
+          print(f"pyproject.toml   [project].version   {version}")
+
+          src = open("src/digest42/__init__.py", encoding="utf-8").read()
+          m = re.search(r'^__version__\s*=\s*"([^"]+)"', src, re.M)
+          init = m.group(1) if m else None
+          print(f"__init__.py      __version__         {init}")
+          if init != version:
+              fail.append(f"src/digest42/__init__.py __version__ is {init!r}, "
+                          f"pyproject.toml says {version!r}")
+
+          # rust/Cargo.toml is read only, never written, by the release
+          # machinery; bumping it is part of the manual version bump.
+          with open("rust/Cargo.toml", "rb") as fh:
+              crate = tomllib.load(fh)
+          crate_version = crate["package"]["version"]
+          print(f"rust/Cargo.toml  [package].version   {crate_version}")
+          if crate_version != version:
+              fail.append(f"rust/Cargo.toml version is {crate_version!r}, "
+                          f"pyproject.toml says {version!r}")
+
+          # The packaging invariants the wheel depends on.  Losing module-name
+          # would silently publish the extension as a top-level `digest42_core`
+          # module that `digest42.backend` never looks for.
+          mat = pp.get("tool", {}).get("maturin", {})
+          print(f"[tool.maturin]   module-name         {mat.get('module-name')}")
+          print(f"[tool.maturin]   python-source       {mat.get('python-source')}")
+          if mat.get("module-name") != "digest42._core":
+              fail.append("[tool.maturin] module-name must be 'digest42._core'")
+          if mat.get("python-source") != "src":
+              fail.append("[tool.maturin] python-source must be 'src'")
+          where = pp["tool"]["setuptools"]["packages"]["find"]["where"]
+          if where != [mat.get("python-source")]:
+              fail.append(f"setuptools packages.find where={where} disagrees with "
+                          f"[tool.maturin] python-source")
+
+          # One wheel per platform is only true while the crate asks for abi3,
+          # and the floor it asks for has to be the floor we advertise.
+          feats = crate["dependencies"]["pyo3"].get("features", [])
+          abi3 = [f for f in feats if f.startswith("abi3-py")]
+          print(f"rust/Cargo.toml  pyo3 features       {feats}")
+          if len(abi3) != 1:
+              fail.append(f"expected exactly one abi3-pyXY pyo3 feature, got {abi3}")
+          else:
+              floor = abi3[0].removeprefix("abi3-py")          # e.g. "311"
+              want = f">={floor[0]}.{floor[1:]}"                # e.g. ">=3.11"
+              print(f"pyproject.toml   requires-python     "
+                    f"{pp['project']['requires-python']} (abi3 implies {want})")
+              if pp["project"]["requires-python"].replace(" ", "") != want:
+                  fail.append(f"requires-python must be {want!r} to match "
+                              f"pyo3's {abi3[0]}")
+
+          tag = os.environ.get("RELEASE_TAG", "")
+          if os.environ["EVENT_NAME"] == "release":
+              print(f"release tag                          {tag}")
+              if tag != f"v{version}":
+                  fail.append(f"release tag {tag!r} is not 'v{version}'; tag the "
+                              f"release v<version> or fix the version")
+          else:
+              print("not a release event: tag check skipped")
+
+          if fail:
+              for f in fail:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"version={version}\n")
+          print(f"OK: digest42 {version}")
+          PY
+
+  # ---------------------------------------------------------------------------
+  # sdist.  Built by the repository's own PEP 517 backend (setuptools), so this
+  # is literally what `pip download --no-binary` gives, and installed here into
+  # a clean venv with cargo removed from PATH to prove the claim that the
+  # extension is optional at install time.
+  # ---------------------------------------------------------------------------
+  sdist:
+    name: build sdist
+    needs: version-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install the build frontend
+        run: python -m pip install --upgrade pip build twine
+
+      - name: python -m build --sdist
+        run: python -m build --sdist --outdir dist
+
+      - name: Check the sdist contents
+        run: python .github/scripts/check_sdist.py dist --version "${{ needs.version-check.outputs.version }}"
+
+      - name: twine check --strict
+        run: python -m twine check --strict dist/*
+
+      # The point of this step: install with no Rust toolchain reachable.  PATH
+      # is cut down to the system directories (the runner's cargo lives in
+      # ~/.cargo/bin and its rustup shims in the tool cache), and pip is invoked
+      # by absolute path.  If the sdist ever grows a build-time Rust dependency,
+      # this fails here rather than for a user on an unsupported platform.
+      - name: Install the sdist in a clean venv, no Rust on PATH
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv-sdist"
+          env -u CARGO -u CARGO_HOME -u RUSTUP_HOME PATH=/usr/bin:/bin \
+            "$RUNNER_TEMP/venv-sdist/bin/pip" install --no-cache-dir dist/*.tar.gz
+          "$RUNNER_TEMP/venv-sdist/bin/pip" list
+
+      - name: The sdist install degrades to the numpy reference
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/venv-sdist/bin/python" \
+            "$GITHUB_WORKSPACE/.github/scripts/smoke_classify.py" python
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Wheels.  maturin is driven as a CLI here, never as the PEP 517 backend --
+  # `[tool.maturin]` in pyproject.toml is all the configuration it needs, and
+  # the repository keeps setuptools as its build backend (see pyproject.toml).
+  #
+  # Platform coverage shipped: manylinux2014 x86_64, macOS arm64, Windows x64.
+  # RELEASING.md documents how to add the rest (linux aarch64/musl, macOS
+  # x86_64); every entry added here needs nothing but a matrix row.
+  # ---------------------------------------------------------------------------
+  wheels:
+    name: wheel (${{ matrix.name }})
+    needs: version-check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            # The build runs in quay.io/pypa/manylinux2014_x86_64 (glibc 2.17),
+            # which is also the oldest glibc we intend to support.  Naming the
+            # version rather than `auto` turns a future container change into a
+            # failure instead of a silently narrower wheel.
+            manylinux: "2_17"
+            # setup-python has no effect inside the container, so name the
+            # interpreter the manylinux image provides.
+            interpreter: python3.11
+            plat-tag: manylinux2014_x86_64
+          - name: macos-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            interpreter: python
+            plat-tag: macosx
+          - name: windows-x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            interpreter: python
+            plat-tag: win_amd64
+    steps:
+      - uses: actions/checkout@v7
+
+      # Not used by the containerized linux build; it is what `-i python`
+      # resolves to on macOS and Windows.  3.11 is the abi3 floor, so the wheel
+      # is built by the oldest interpreter it claims to support.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: maturin build
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          command: build
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          rust-toolchain: stable
+          # --locked: rust/Cargo.lock is committed, so the release is built from
+          # the exact dependency set that CI tested.
+          args: --release --locked --out dist --interpreter ${{ matrix.interpreter }}
+
+      - name: Check the wheel contents
+        run: >
+          python .github/scripts/check_wheel.py dist
+          --version "${{ needs.version-check.outputs.version }}"
+          --plat-tag "${{ matrix.plat-tag }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-wheel-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Smoke test.  Installs the *built linux wheel* (the only platform this repo
+  # can execute) into a clean venv and exercises it from outside the checkout,
+  # on both ends of the abi3 range -- 3.11 is what the wheel was built with and
+  # 3.13 is the interpreter development happens on, so this is also the test of
+  # the "one wheel serves 3.11+" claim.
+  # ---------------------------------------------------------------------------
+  smoke-test:
+    name: smoke test the linux wheel (py${{ matrix.python-version }})
+    needs: wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      # For tests/ and .github/scripts/; the package itself comes from the
+      # wheel.  The repository uses a src/ layout, so no import can fall
+      # through to the working tree, and the steps below run in $RUNNER_TEMP
+      # anyway.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-wheel-linux-x86_64
+          path: wheelhouse
+
+      - name: Install the wheel in a clean venv
+        run: |
+          set -euo pipefail
+          ls -l wheelhouse
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/pip" install wheelhouse/*.whl pytest
+          "$RUNNER_TEMP/venv/bin/pip" list
+
+      - name: Import the extension and A/B the two backends
+        working-directory: ${{ runner.temp }}
+        env:
+          DIGEST42_BACKEND: rust
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" \
+            "$GITHUB_WORKSPACE/.github/scripts/smoke_classify.py" rust
+
+      # A fast subset of the suite, run against the installed wheel from a
+      # directory that contains nothing but the copied test files -- no
+      # pyproject.toml, no src/, no conftest.py, so pytest cannot pick up the
+      # repository as rootdir and `import digest42` can only resolve to the
+      # wheel.  The full suite is CI's job, on both backends (ci.yml).
+      - name: pytest subset from the installed wheel (DIGEST42_BACKEND=rust)
+        env:
+          DIGEST42_BACKEND: rust
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/wheel-tests"
+          mkdir -p "$d"
+          cp tests/test_imports.py tests/test_ranging.py tests/test_transforms.py "$d/"
+          cd "$d"
+          "$RUNNER_TEMP/venv/bin/python" -m pytest -q -rs -p no:cacheprovider \
+            test_imports.py test_ranging.py test_transforms.py
+
+  # ---------------------------------------------------------------------------
+  # The one hazard of building the sdist and the wheels with two different tools
+  # is that they could describe different distributions under one version.  Both
+  # read the same [project] table, so they cannot -- and this job is what makes
+  # that a checked fact.  It is cheap and runs on dispatch too.
+  # ---------------------------------------------------------------------------
+  metadata:
+    name: sdist and wheels agree
+    needs: [sdist, wheels]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - run: python .github/scripts/check_metadata.py dist
+
+  # ---------------------------------------------------------------------------
+  # Publish.  Trusted Publishing only: the job presents a short-lived OIDC
+  # token, so there is no API token anywhere in this repository or its secrets.
+  # `id-token: write` is scoped to this job alone, and the `pypi` environment
+  # name is part of what pypi.org matches against -- see RELEASING.md before
+  # renaming either this file or that environment.
+  #
+  # No publish step runs for workflow_dispatch: a dispatch is a build-and-verify
+  # rehearsal whose artifacts stay on the run page.
+  # ---------------------------------------------------------------------------
+  publish-pypi:
+    name: publish to PyPI
+    if: github.event_name == 'release'
+    needs: [version-check, sdist, wheels, smoke-test, metadata]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: pypi
+      url: https://pypi.org/p/digest42
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: What is about to be uploaded
+        run: |
+          set -euo pipefail
+          ls -l dist
+          test -f "dist/digest42-${{ needs.version-check.outputs.version }}.tar.gz"
+          n="$(find dist -maxdepth 1 -name '*.whl' | wc -l)"
+          echo "$n wheels + 1 sdist"
+          # One per row of the `wheels` matrix -- bump this when the matrix
+          # grows, so a dropped platform cannot be published quietly.
+          test "$n" -eq 3
+
+      - name: pypi.org
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          print-hash: true
+          # No skip-existing: re-uploading a version that already exists on
+          # PyPI must fail loudly rather than look like a successful release.

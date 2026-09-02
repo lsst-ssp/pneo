@@ -104,6 +104,68 @@ two-sided deviation from D-4 instead of the one-sided one under study.
 Clamped components are a **comparison/emulation mode only, never a gate
 mode** — see the class docstring for why (the clamped density is not
 normalizable, so DESIGN §4.1 has no generative counterpart for it).
+
+**Smooth-in-H reconstruction (``h_interpolation="pchip"``).**  The default
+evaluation is piecewise constant in all four variables, which puts an
+H-bin-edge discontinuity of the integrand on every ρ-aligned curve
+``H(ρ) = V - 5 log10(ρ r(ρ)) + 2.5 log10 Φ(α(ρ))``.  DESIGN §2.5 measures
+the consequence: the ρ-axis staircase, not the ``1/(e sin i)``
+integrable singularity, dominates the quadrature error, forcing ρ-heavy
+grids (n_ρ ≈ 1200) for p90 |Δp| ≈ 3.5e-3.  ``h_interpolation="pchip"``
+removes the H staircase (it does **nothing** about the ``1/(e sin i)``
+caveat, which lives on the e and i bin edges and is a property of the
+*measure*, not of the H reconstruction).
+
+The construction is deliberately a reconstruction of the *cumulative*
+distribution, not of the density:
+
+1. For each (q, e, i) cell, form the cumulative object count over the 19
+   H edges, ``C(0) = 0`` … ``C(25.5) = cell total`` — 18 bin counts, 19
+   knots, and the knot values are exact (integer counts, cumsum in double).
+2. Fit a **monotone** piecewise cubic through those 19 knots
+   (PCHIP: Fritsch–Carlson harmonic-mean interior slopes with the standard
+   one-sided three-point end slopes and the 3Δ limiter).  The data are
+   non-decreasing because counts are non-negative, so the interpolant is
+   non-decreasing.
+3. The density is the *derivative* of that cubic, divided by the cell's
+   ``dq · de · di[rad]`` volume and by ``(2 π)^3`` — exactly the divisors the
+   piecewise-constant mode uses, minus the ``dH`` that the derivative
+   supplies.
+
+Three properties follow, and they are what makes this safe rather than a
+heuristic smoothing:
+
+* **Mass is conserved per H bin, exactly.**  ``∫_{H_k}^{H_{k+1}} C'(H) dH =
+  C(H_{k+1}) - C(H_k) = counts[k]``.  Interpolating the CDF and
+  differentiating is the only construction with this property; interpolating
+  the *density* values does not have it.
+* **No mass leaks between bins.**  Monotonicity is the mechanism: because
+  ``C`` is non-decreasing and pinned to the exact cumulative count at every
+  knot, the mass in ``[H_k, H_{k+1})`` is ``counts[k]`` whatever the
+  neighbouring counts are.  A cell with counts in one H bin only keeps all of
+  its mass in that bin (the neighbouring intervals get ``Δ = 0``, both end
+  slopes 0, and a cubic that is *constant* — density identically zero).  This
+  is the WP4-review "interpolation invents density" objection, answered
+  structurally: nothing can be invented outside a bin without violating an
+  interpolation condition.
+* **Non-negativity.**  ``C`` monotone ⇒ ``C' ≥ 0``.  Concretely, PCHIP's
+  slopes satisfy ``0 ≤ m_k ≤ 3 min(Δ_{k-1}, Δ_k)``, which is inside the
+  Fritsch–Carlson monotonicity region for every interval.
+
+D-4 truncation is untouched: the density is exactly ``0.0`` outside
+``[0, 25.5)`` and outside the q/e/i support, and the q/e/i lookup is
+bit-identical to the histogram mode.  The reconstructed density *is*
+generally discontinuous at the two support endpoints H = 0 and H = 25.5
+(the interpolant's one-sided slope there is not zero), which is the same
+kind of edge the histogram mode has and is not a defect of the smoothing;
+across every *interior* H edge the density is continuous (PCHIP is C¹, so
+its derivative is C⁰).
+
+``h_interpolation`` is mutually exclusive with ``h_top_bin_infinite``: the
+D-14 clamp is a histogram-emulation device (it extends a *constant* past the
+support), and a smooth density that is suddenly constant beyond 25.5 is
+neither a reconstruction of the model nor an emulation of digest2.
+Constructing both together raises ``ValueError``.
 """
 
 from __future__ import annotations
@@ -129,6 +191,7 @@ __all__ = [
     "H_EDGES",
     "D2_CLASSES",
     "D2_VARIANTS",
+    "H_INTERPOLATIONS",
 ]
 
 
@@ -270,8 +333,17 @@ BIN_VOLUME = (
     * np.diff(H_EDGES)[None, None, None, :]
 )
 
+#: (29, 8, 11) cell volume dq * de * di[rad] — BIN_VOLUME with the dH factor
+#: taken out.  The smooth-in-H mode divides by this instead, because there the
+#: dH is supplied by differentiating the cumulative count (module docstring).
+QEI_VOLUME = (
+    np.diff(Q_EDGES)[:, None, None]
+    * np.diff(E_EDGES)[None, :, None]
+    * np.diff(I_EDGES)[None, None, :]
+)
+
 for _arr in (QPART, EPART, IPART_DEG, HPART, Q_EDGES, E_EDGES, I_EDGES_DEG,
-             I_EDGES, H_EDGES, _MUK_PSEUDO_VOLUME, BIN_VOLUME):
+             I_EDGES, H_EDGES, _MUK_PSEUDO_VOLUME, BIN_VOLUME, QEI_VOLUME):
     _arr.flags.writeable = False   # single source of truth; do not mutate
 del _arr
 
@@ -437,6 +509,108 @@ def read_digest2_model(
     return tables
 
 
+#: Valid values of ``Digest2Histogram(h_interpolation=...)``.
+#:
+#: ``"none"``   piecewise-constant in H (the D-10 default; digest2's own rule).
+#: ``"pchip"``  monotone-cubic reconstruction of the cumulative count in H,
+#:              evaluated as its derivative — mass-conserving per bin,
+#:              non-negative, C⁰ across interior H edges (module docstring).
+H_INTERPOLATIONS = ("none", "pchip")
+
+
+# ---------------------------------------------------------------------------
+# Monotone piecewise-cubic (PCHIP) machinery
+#
+# Implemented here rather than imported: scipy is not a digest42 dependency
+# [D-9].  This is the standard Fritsch–Carlson / Fritsch–Butland construction
+# (Fritsch & Carlson 1980, SIAM J. Numer. Anal. 17, 238; Fritsch & Butland
+# 1984, SIAM J. Sci. Stat. Comput. 5, 300), which is also what
+# ``scipy.interpolate.PchipInterpolator`` implements — the unit tests check
+# agreement against a hand-transcribed reference on a small case, and, when
+# scipy happens to be importable, against scipy itself.
+# ---------------------------------------------------------------------------
+
+
+def _pchip_end_slope(h0: float, h1: float, d0, d1):
+    """One-sided three-point end slope with the monotonicity limiter.
+
+    ``h0``/``h1`` are the two intervals adjacent to the end (``h0`` the
+    outermost), ``d0``/``d1`` the corresponding secant slopes.  The raw
+    estimate is the quadratic-through-three-points slope; it is then set to 0
+    if it disagrees in sign with the adjacent secant, and clipped to ``3 d0``
+    if the secants bracket an extremum and the estimate exceeds the
+    Fritsch–Carlson bound.  Both guards are what keeps the interpolant
+    monotone all the way to the boundary.
+    """
+    d = ((2.0 * h0 + h1) * d0 - h0 * d1) / (h0 + h1)
+    wrong_sign = np.sign(d) != np.sign(d0)
+    over = (np.sign(d0) != np.sign(d1)) & (np.abs(d) > 3.0 * np.abs(d0))
+    out = np.where(wrong_sign, 0.0, d)
+    return np.where(~wrong_sign & over, 3.0 * d0, out)
+
+
+def _pchip_slopes(x: np.ndarray, y: np.ndarray):
+    """Monotone Hermite slopes at the knots of ``y`` (last axis) over ``x``.
+
+    Returns ``(m, delta)`` where ``m`` has the shape of ``y`` and ``delta`` the
+    secant slopes (one shorter).  Interior slopes are the weighted harmonic
+    mean of the two adjacent secants, forced to 0 wherever the secants change
+    sign or either vanishes; that bound (``m_k <= 3 min(|delta_{k-1}|,
+    |delta_k|)``) is exactly the Fritsch–Carlson sufficient condition for the
+    Hermite cubic to be monotone on every interval.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if x.ndim != 1 or x.size < 3:
+        raise ValueError("x must be 1-D with at least 3 knots")
+    if y.shape[-1] != x.size:
+        raise ValueError(
+            f"y's last axis ({y.shape[-1]}) must match len(x) ({x.size})"
+        )
+    h = np.diff(x)
+    delta = np.diff(y, axis=-1) / h
+
+    m = np.zeros(y.shape, dtype=float)
+    d0, d1 = delta[..., :-1], delta[..., 1:]
+    h0, h1 = h[:-1], h[1:]
+    w1 = 2.0 * h1 + h0
+    w2 = h1 + 2.0 * h0
+    same = (d0 * d1) > 0.0
+    # Evaluate the harmonic mean only where it is defined; the dummy 1.0
+    # elsewhere keeps the expression finite (no divide-by-zero warnings) and is
+    # discarded by the ``where``.
+    whmean = (w1 / np.where(same, d0, 1.0) + w2 / np.where(same, d1, 1.0)) / (
+        w1 + w2
+    )
+    m[..., 1:-1] = np.where(same, 1.0 / whmean, 0.0)
+    m[..., 0] = _pchip_end_slope(h[0], h[1], delta[..., 0], delta[..., 1])
+    m[..., -1] = _pchip_end_slope(h[-1], h[-2], delta[..., -1], delta[..., -2])
+    return m, delta
+
+
+def _pchip_derivative_coeffs(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Per-interval coefficients of the PCHIP *derivative*, Horner-ready.
+
+    Returns ``(..., n_intervals, 3)`` = ``(a, b, c)`` such that on interval
+    ``k`` the interpolant's derivative at ``H`` is
+
+        ``a + s (b + s c)``,   ``s = H - x[k]``
+
+    i.e. the quadratic ``C'(s)`` of the cubic Hermite segment.  The Horner
+    grouping is fixed here on purpose: the Rust kernel evaluates the *same*
+    expression on the *same* coefficients, which is what makes the two
+    backends bit-identical (DESIGN §3, D-15).
+    """
+    m, delta = _pchip_slopes(x, y)
+    h = np.diff(np.asarray(x, dtype=float))
+    m0, m1 = m[..., :-1], m[..., 1:]
+    # Cubic Hermite in the un-normalized local variable s = H - x[k]:
+    #   C(s) = y_k + m0 s + c2 s^2 + c3 s^3
+    c2 = (3.0 * delta - 2.0 * m0 - m1) / h
+    c3 = (m0 + m1 - 2.0 * delta) / (h * h)
+    return np.stack((m0, 2.0 * c2, 3.0 * c3), axis=-1)
+
+
 def _bin_index(edges: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Half-open [lo, hi) bin lookup matching digest2's ``x >= part[b]`` rule.
 
@@ -452,9 +626,11 @@ def _bin_index(edges: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray
 class Digest2Histogram(PopulationDensity):
     """The MPC digest2 (q, e, i, H) binned population model (D-10).
 
-    Piecewise-constant density over the digest2 bin structure; uniform angles;
-    absolute calibration inherited from the file. Interpolation is OFF and not
-    implemented in v0 (raise NotImplementedError if requested).
+    Density over the digest2 bin structure; uniform angles; absolute
+    calibration inherited from the file.  Piecewise constant in q, e and i
+    always; in H either piecewise constant (``h_interpolation="none"``, the
+    default and digest2's own rule) or a mass-conserving monotone-cubic
+    reconstruction (``h_interpolation="pchip"``).
 
     Attributes
     ----------
@@ -464,6 +640,25 @@ class Digest2Histogram(PopulationDensity):
     classes : human-readable description of the class aggregation used.
     h_top_bin_infinite : whether the top H bin is treated as [24, inf)
         (digest2-emulation mode) rather than [24, 25.5) (D-4 default).
+    h_interpolation : ``"none"`` or ``"pchip"`` — the H reconstruction.
+
+    Smooth-in-H mode (``h_interpolation="pchip"``)
+    ---------------------------------------------
+    Per (q, e, i) cell the cumulative object count over the 19 H edges is
+    interpolated by a monotone piecewise cubic (PCHIP) and the density is that
+    cubic's derivative, divided by ``dq · de · di[rad]`` and ``(2 π)^3``.  The
+    module docstring derives the three properties this buys — exact per-H-bin
+    mass conservation, no mass leaking between bins (monotonicity, which is
+    the answer to the WP4-review "interpolation invents density" objection),
+    and non-negativity — and states the two things it does *not* change: D-4
+    truncation outside ``[0, 25.5)``, and the ``1/(e sin i)`` integrable
+    singularity of DESIGN §2.5, which lives on the e/i edges.
+
+    The reconstruction is continuous across every interior H edge and
+    generally *discontinuous* at H = 0 and H = 25.5, where the support ends.
+    :meth:`sample` draws H by inverting the same cubic, so the generator and
+    the density agree; the q/e/i lookup, :attr:`support`, :attr:`total_count`
+    and :meth:`bin_indices` are all unaffected.
 
     digest2-emulation mode (``h_top_bin_infinite=True``)
     ----------------------------------------------------
@@ -497,6 +692,7 @@ class Digest2Histogram(PopulationDensity):
         classes: str = "SS",
         interpolate: bool = False,
         h_top_bin_infinite: bool = False,
+        h_interpolation: str = "none",
     ):
         """Build a histogram density from absolute per-bin object counts.
 
@@ -509,19 +705,55 @@ class Digest2Histogram(PopulationDensity):
         label : "NEO" or "other" (the PopulationDensity class label).
         variant : "All" or "Unk", carried for provenance.
         classes : provenance string describing the class aggregation.
-        interpolate : must be False; interpolation is not implemented [D-10].
+        interpolate : must be False.  Full (q, e, i, H) interpolation is not
+            implemented; the H-only reconstruction is ``h_interpolation``.
         h_top_bin_infinite : digest2-emulation mode.  False (default) is D-4:
             the top H bin is [24, 25.5) and the density is 0 above it.  True
             reinstates digest2's ``hToBin`` clamp, making it [24, inf).  The
             resulting density is non-normalizable and the component is
             **gate-ineligible** (:meth:`sample` raises); see the class
-            docstring.
+            docstring.  Mutually exclusive with ``h_interpolation``.
+        h_interpolation : ``"none"`` (default) or ``"pchip"``.  ``"pchip"``
+            replaces the piecewise-constant H dependence by the derivative of
+            a monotone cubic through the cell's cumulative counts — same mass
+            in every H bin, continuous across interior H edges, still exactly
+            0 outside [0, 25.5).  See the class and module docstrings.
+
+        Raises
+        ------
+        ValueError
+            for an unknown ``h_interpolation``, and for
+            ``h_interpolation != "none"`` together with
+            ``h_top_bin_infinite=True`` (the D-14 clamp extends a *constant*
+            beyond the support, which a smooth reconstruction has no analogue
+            for; the combination would be neither a reconstruction of the
+            model nor an emulation of digest2).
         """
         if interpolate:
             raise NotImplementedError(
-                "Digest2Histogram interpolation is not implemented in v0 "
-                "(D-10): interpolating near empty bins invents density. "
-                "Evaluation is piecewise-constant."
+                "Digest2Histogram(interpolate=True) — full (q, e, i, H) "
+                "interpolation is not implemented: interpolating in q/e/i "
+                "near empty cells invents density with nothing to pin it "
+                "down. The implemented reconstruction is H-only and "
+                "mass-conserving: pass h_interpolation='pchip'."
+            )
+        h_interpolation = str(h_interpolation)
+        if h_interpolation not in H_INTERPOLATIONS:
+            raise ValueError(
+                f"unknown h_interpolation {h_interpolation!r}; valid options "
+                f"are {', '.join(repr(v) for v in H_INTERPOLATIONS)}"
+            )
+        if h_interpolation != "none" and h_top_bin_infinite:
+            raise ValueError(
+                "h_interpolation="
+                f"{h_interpolation!r} cannot be combined with "
+                "h_top_bin_infinite=True: the D-14 clamp is a "
+                "histogram-emulation device (it extends the top bin's "
+                "*constant* density to H = inf, which is how digest2's "
+                "hToBin behaves), while a smooth-in-H reconstruction has no "
+                "constant to extend — the result would be neither a "
+                "reconstruction of the model nor an emulation of digest2, "
+                "and it would be non-normalizable on top of that. Pick one."
             )
         counts = np.array(counts, dtype=float)   # copy: the object owns it
         if counts.shape != MODEL_SHAPE:
@@ -538,6 +770,7 @@ class Digest2Histogram(PopulationDensity):
         self.variant = str(variant)
         self.classes = str(classes)
         self.h_top_bin_infinite = bool(h_top_bin_infinite)
+        self.h_interpolation = h_interpolation
 
         self.q_edges = Q_EDGES
         self.e_edges = E_EDGES
@@ -545,6 +778,7 @@ class Digest2Histogram(PopulationDensity):
         self.i_edges_deg = I_EDGES_DEG
         self.h_edges = H_EDGES
         self.bin_volume = BIN_VOLUME    # dq * de * di[rad] * dH
+        self.qei_volume = QEI_VOLUME    # dq * de * di[rad]
 
         # Number density: counts per unit (q, e, i[rad], H) volume, further
         # divided by (2 pi)^3 so that the returned value is the full 7-D
@@ -552,6 +786,35 @@ class Digest2Histogram(PopulationDensity):
         self._density_table = counts / (BIN_VOLUME * _ANGLE_VOLUME)
         self._total_count = float(counts.sum())
         self._cdf: np.ndarray | None = None
+        #: 1 / (dq de di (2 pi)^3), the divisor the smooth-in-H mode uses.
+        self._qei_inv_volume = 1.0 / (QEI_VOLUME * _ANGLE_VOLUME)
+        self._h_coeffs: np.ndarray | None = None
+        if h_interpolation == "pchip":
+            self._h_coeffs = self._build_h_pchip(counts)
+
+    @staticmethod
+    def _build_h_pchip(counts: np.ndarray) -> np.ndarray:
+        """(29, 8, 11, 18, 3) Horner coefficients of the smooth H density.
+
+        The knot values are the *exact* cumulative counts: the shipped model's
+        cells are integers below 2^53, so ``cumsum`` in float64 is exact and
+        ``C(H_{k+1}) - C(H_k)`` recovers ``counts[k]`` bit-for-bit.  (For a
+        hypothetical fractional-count model the recovery would be exact to
+        ~1e-16 of the *cell total* instead, which is the only place the mass
+        guarantee is weaker than exact.)
+
+        The returned coefficients are already divided by
+        ``dq de di (2 pi)^3``, so :meth:`density` is one Horner evaluation and
+        nothing else — the same expression the Rust kernel runs on the same
+        numbers, which is what makes the backends bit-identical.
+        """
+        cum = np.zeros(counts.shape[:3] + (counts.shape[3] + 1,), dtype=float)
+        cum[..., 1:] = np.cumsum(counts, axis=-1)
+        coeffs = _pchip_derivative_coeffs(H_EDGES, cum)
+        inv_vol = 1.0 / (QEI_VOLUME * _ANGLE_VOLUME)
+        coeffs = np.ascontiguousarray(coeffs * inv_vol[..., None, None])
+        coeffs.flags.writeable = False
+        return coeffs
 
     # -- factories ---------------------------------------------------------
 
@@ -559,6 +822,7 @@ class Digest2Histogram(PopulationDensity):
     def neo_other_pair(
         cls, path: str, variant: str = "All", *,
         h_top_bin_infinite: bool = False,
+        h_interpolation: str = "none",
     ) -> tuple["Digest2Histogram", "Digest2Histogram"]:
         """Load the model file and return (neo, other) components.
 
@@ -573,6 +837,12 @@ class Digest2Histogram(PopulationDensity):
         must be clamped together; a mixed pair would compare a truncated NEO
         density against a clamped "other" density and the resulting posterior
         would be an artifact of the mismatch.
+
+        ``h_interpolation`` is likewise passed to **both** components, for the
+        same reason: P(NEO) is a ratio of the two components' marginal
+        likelihoods, so reconstructing the faint end of one and not the other
+        would put a modelling artifact straight into the posterior.  The two
+        modes are mutually exclusive (see the constructor).
 
         Implementation note: digest2's named classes overlap and do not cover
         the model (module docstring), so "all remaining classes" is realised
@@ -597,9 +867,11 @@ class Digest2Histogram(PopulationDensity):
 
         return (
             cls(neo, "NEO", variant=variant, classes="NEO",
-                h_top_bin_infinite=h_top_bin_infinite),
+                h_top_bin_infinite=h_top_bin_infinite,
+                h_interpolation=h_interpolation),
             cls(other, "other", variant=variant, classes="SS - NEO",
-                h_top_bin_infinite=h_top_bin_infinite),
+                h_top_bin_infinite=h_top_bin_infinite,
+                h_interpolation=h_interpolation),
         )
 
     @classmethod
@@ -612,6 +884,7 @@ class Digest2Histogram(PopulationDensity):
         *,
         subtract=(),
         h_top_bin_infinite: bool = False,
+        h_interpolation: str = "none",
     ) -> "Digest2Histogram":
         """Aggregate named digest2 classes into one component (diagnostics).
 
@@ -621,7 +894,9 @@ class Digest2Histogram(PopulationDensity):
         the way the NEO/other pair is built (use :meth:`neo_other_pair`).
 
         ``h_top_bin_infinite`` selects the digest2-emulation top H bin
-        [24, inf) (comparison mode only; see the class docstring).
+        [24, inf) (comparison mode only; see the class docstring);
+        ``h_interpolation`` selects the smooth-in-H reconstruction.  The two
+        are mutually exclusive.
         """
         _check_variant(variant)
         tables = read_digest2_model(path)
@@ -639,7 +914,8 @@ class Digest2Histogram(PopulationDensity):
         if subtract:
             desc += " - " + " - ".join(subtract)
         return cls(counts, label, variant=variant, classes=desc,
-                   h_top_bin_infinite=h_top_bin_infinite)
+                   h_top_bin_infinite=h_top_bin_infinite,
+                   h_interpolation=h_interpolation)
 
     # -- interface ---------------------------------------------------------
 
@@ -662,12 +938,19 @@ class Digest2Histogram(PopulationDensity):
         return ih, ok_h
 
     def density(self, elements3: np.ndarray, H: np.ndarray) -> np.ndarray:
-        """Piecewise-constant number density; see PopulationDensity.density.
+        """Number density; see PopulationDensity.density.
 
         ``elements3`` is (..., 3) = (q [AU], e [-], i [rad]); ``H`` is (...,)
         [mag].  Units of the result: objects / (AU * rad^4 * mag), i.e. per
         unit q x e x i x Omega x omega x M x H with the 1/(2 pi)^3 uniform-
         angle factor included.  Exactly 0.0 outside the support [D-4].
+
+        Piecewise constant in q, e, i always.  In H it is piecewise constant
+        (``h_interpolation="none"``) or the derivative of the cell's monotone
+        cubic cumulative-count interpolant (``"pchip"``).  The q/e/i lookup —
+        which bins, which points are in support, and the exact bit pattern of
+        the answer where the answer is 0 — is identical in the two modes; only
+        the value inside the support differs.
 
         With ``h_top_bin_infinite=True`` the sole change is that H >= 25.5
         evaluates to the [24, 25.5) bin's density instead of 0 (digest2's
@@ -695,7 +978,16 @@ class Digest2Histogram(PopulationDensity):
 
         out = np.zeros(q.shape, dtype=float)
         if ok.any():
-            out[ok] = self._density_table[iq[ok], ie[ok], ii[ok], ih[ok]]
+            if self._h_coeffs is None:
+                out[ok] = self._density_table[iq[ok], ie[ok], ii[ok], ih[ok]]
+            else:
+                ihx = ih[ok]
+                co = self._h_coeffs[iq[ok], ie[ok], ii[ok], ihx]
+                # s in [0, dH): the H bin is half-open, so s never reaches the
+                # interval width and the derivative is evaluated strictly
+                # inside the segment it belongs to.
+                s = h[ok] - self.h_edges[ihx]
+                out[ok] = co[..., 0] + s * (co[..., 1] + s * co[..., 2])
         return out
 
     def sample(self, n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
@@ -705,6 +997,14 @@ class Digest2Histogram(PopulationDensity):
         (q, e, i, H) are uniform within the chosen bin (which is exactly the
         piecewise-constant density) and Omega, omega, M are uniform in
         [0, 2 pi).  The returned semi-major axis is a = q / (1 - e).
+
+        With ``h_interpolation="pchip"`` everything above is unchanged except
+        the within-bin H draw, which is the inverse CDF of the cell's monotone
+        cubic on that bin (:meth:`_sample_h_pchip`) instead of a uniform.  The
+        bin selection is untouched, because the reconstruction conserves each
+        bin's mass exactly — that is what lets the two parts of the sampler be
+        combined this way at all.  Elements handling (uniform angles, the
+        a = q/(1-e) conversion, the unbound-draw caveat below) is identical.
 
         UNBOUND DRAWS — NOT NEGLIGIBLE FOR THE NEO COMPONENT.  The model's
         top eccentricity bin is [0.9, 1.1), which straddles e = 1, and half
@@ -781,7 +1081,10 @@ class Digest2Histogram(PopulationDensity):
         q = _uniform_in(self.q_edges, iq)
         ecc = _uniform_in(self.e_edges, ie)
         inc = _uniform_in(self.i_edges, ii)
-        h = _uniform_in(self.h_edges, ih)
+        if self._h_coeffs is None:
+            h = _uniform_in(self.h_edges, ih)
+        else:
+            h = self._sample_h_pchip(iq, ie, ii, ih, rng)
 
         with np.errstate(divide="ignore", invalid="ignore"):
             a = q / (1.0 - ecc)
@@ -792,6 +1095,92 @@ class Digest2Histogram(PopulationDensity):
         elements6[:, 2] = inc
         elements6[:, 3:6] = rng.random((n, 3)) * _TWO_PI
         return elements6, h
+
+    def _sample_h_pchip(self, iq, ie, ii, ih, rng) -> np.ndarray:
+        """Inverse-CDF draw of H inside the already-chosen (cell, H bin).
+
+        The bin was drawn with probability proportional to its object count,
+        exactly as in histogram mode; what changes is the *within-bin*
+        distribution, which here is the reconstructed density rather than a
+        uniform.  So: solve ``C(s) - C(0) = u [C(dH) - C(0)]`` for
+        ``s in [0, dH)``, where ``C`` is the cell's monotone cubic — i.e.
+        invert the exact antiderivative of what :meth:`density` evaluates, so
+        the generator and the density cannot disagree.
+
+        ``C`` is built from the *stored* Horner coefficients ``(a, b, c)`` of
+        the derivative, as ``a s + (b/2) s^2 + (c/3) s^3``; the normalization
+        uses that same cubic at ``s = dH`` rather than the bin count, so
+        ``u < 1`` always has a root strictly inside the interval regardless of
+        the last-bit difference between ``(c/3)`` and the ``c3`` it came from.
+        (The bin *count* is what sets the bin's selection probability, so the
+        joint density is the intended one to within that ~1e-16 relative.)
+
+        Newton, safeguarded by bisection: the cubic is non-decreasing, so
+        ``[0, dH]`` brackets the root at every step (``C(0) - target <= 0`` and
+        ``C(dH) - target >= 0``), and each iteration replaces one bracket end
+        with the new point, so the bracket never grows.  A Newton step that
+        leaves the bracket, or lands where the derivative is zero (a plateau
+        of the CDF — a genuinely flat piece of the reconstructed density), is
+        replaced by the bisection midpoint; every fifth iteration bisects
+        unconditionally.
+
+        What that guarantees, precisely: 60 iterations of which 12 are forced
+        bisections bound the bracket by ``dH * 2^-12`` unconditionally — a
+        pathological Newton sequence that crawled along one bracket end every
+        non-forced step would stop there.  The real convergence is Newton's,
+        and it is measured rather than assumed: over 2x10^5 random
+        (cell, bin, u) triples spanning every populated bin of the shipped
+        model, ``|C(s) - target| / C(dH)`` comes out at 6e-16, i.e. the
+        quantile is exact to double precision.  See
+        ``tests/test_population.py::test_pchip_sample_inversion_is_converged``,
+        which re-derives that residual and asserts it below 1e-13, and
+        ``test_pchip_sample_reproduces_the_analytic_density``, which would
+        catch a systematically mis-inverted CDF by chi-square.
+        """
+        co = self._h_coeffs[iq, ie, ii, ih]
+        a, b, c = co[..., 0], co[..., 1], co[..., 2]
+        lo_edge = self.h_edges[ih]
+        width = (self.h_edges[ih + 1] - lo_edge).astype(float)
+
+        # Antiderivative of the stored derivative polynomial, relative to s=0.
+        b2 = 0.5 * b
+        c3 = c / 3.0
+
+        def cdf(s):
+            return s * (a + s * (b2 + s * c3))
+
+        total = cdf(width)
+        live = total > 0.0
+        # A zero-mass bin cannot be selected (the bin CDF search skips
+        # zero-count bins), so `live` is all-True on the shipped model; the
+        # guard keeps a hand-built degenerate component from looping on a
+        # constant CDF.
+        safe_total = np.where(live, total, 1.0)
+        target = rng.random(ih.shape) * total
+
+        lo = np.zeros(ih.shape, dtype=float)
+        hi = width.copy()
+        # Linear-in-the-bin first guess (exact when the cell is locally flat).
+        s = width * (target / safe_total)
+        for it in range(60):
+            f = cdf(s) - target
+            lo = np.where(f <= 0.0, s, lo)
+            hi = np.where(f > 0.0, s, hi)
+            mid = 0.5 * (lo + hi)
+            deriv = a + s * (b + s * c)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                cand = s - np.where(deriv > 0.0, f / deriv, np.nan)
+            take = (
+                np.isfinite(cand) & (cand > lo) & (cand < hi) & (it % 5 != 4)
+            )
+            s = np.where(take, cand, mid)
+        s = np.where(live, s, 0.0)
+
+        # Half-open [lo_edge, hi_edge): never return the upper edge, which
+        # would fall in the next bin (or out of support, for the top bin).
+        return np.minimum(
+            lo_edge + s, np.nextafter(lo_edge + width, lo_edge)
+        )
 
     @property
     def support(self) -> dict[str, tuple[float, float]]:
@@ -821,7 +1210,9 @@ class Digest2Histogram(PopulationDensity):
 
         Equals the integral of the density over its support and the uniform
         angles in the default (D-4) mode; WP4 acceptance: reproduces the
-        file's per-class totals.
+        file's per-class totals.  Unchanged by ``h_interpolation``, and still
+        the integral there — that is the point of reconstructing the
+        cumulative count rather than the density (module docstring).
 
         .. warning::
            In digest2-emulation mode (``h_top_bin_infinite=True``) this is
@@ -842,6 +1233,23 @@ class Digest2Histogram(PopulationDensity):
         view = self._counts.view()
         view.flags.writeable = False
         return view
+
+    @property
+    def h_coeffs(self) -> np.ndarray | None:
+        """(29, 8, 11, 18, 3) smooth-in-H Horner coefficients, or None.
+
+        ``None`` in ``h_interpolation="none"`` mode.  Otherwise the density at
+        ``H`` in bin ``ih`` of cell ``(iq, ie, ii)`` is exactly
+
+            ``a + s * (b + s * c)``,  ``s = H - h_edges[ih]``
+
+        with ``(a, b, c) = h_coeffs[iq, ie, ii, ih]``, already divided by
+        ``dq de di (2 pi)^3``.  Exposed so the Rust backend can copy the same
+        numbers and evaluate the same expression — the two backends are
+        bit-identical because they share the coefficients, not because they
+        each re-derive them (see ``digest42.backend``).  Read-only.
+        """
+        return self._h_coeffs
 
     def bin_indices(self, elements3: np.ndarray, H: np.ndarray):
         """(iq, ie, ii, ih, in_support) for the given (q, e, i[rad]) and H.
@@ -881,8 +1289,12 @@ class Digest2Histogram(PopulationDensity):
         clamp = (
             ", h_top_bin_infinite=True" if self.h_top_bin_infinite else ""
         )
+        interp = (
+            f", h_interpolation={self.h_interpolation!r}"
+            if self.h_interpolation != "none" else ""
+        )
         return (
             f"Digest2Histogram(label={self.label!r}, variant={self.variant!r}, "
             f"classes={self.classes!r}, total_count={self.total_count:.0f}"
-            f"{clamp})"
+            f"{clamp}{interp})"
         )

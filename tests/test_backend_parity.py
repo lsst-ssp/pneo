@@ -1418,3 +1418,292 @@ def test_existing_wp5_test_on_both_backends(backend, name, d2pair):
         pytest.skip(f"{name} needs fixtures {params} this shim cannot supply")
     assert resolve_backend("auto") == backend
     fn(*[values[p] for p in params])
+
+
+# ---------------------------------------------------------------------------
+# 7. Smooth-in-H reconstruction (h_interpolation="pchip")
+#
+# Here the two backends are NOT independent implementations: Python
+# precomputes the monotone-cubic coefficients once and the kernel copies them,
+# so both evaluate the identical Horner form `a + s (b + s c)` on identical
+# doubles.  That is a deliberate design choice — it makes the density lookup
+# *bit-identical* rather than merely close, which in turn keeps the
+# end-to-end Lambda agreement at the same level as the histogram mode instead
+# of adding a coefficient-derivation seam.  The tests below therefore assert
+# bit-equality of the lookup, and check that the glue refuses (rather than
+# silently downgrades) any component whose coefficients it cannot pass on.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pchip_pair():
+    if not os.path.exists(MODEL_PATH):  # pragma: no cover
+        pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, h_interpolation="pchip")
+
+
+def test_pchip_density_lookup_is_bit_exact(core, pchip_pair):
+    """Rust == Python bit for bit on the smooth branch, edges included.
+
+    Probes hit every bin edge from both sides (so `s = H - h_edges[ih]` is
+    exercised at 0 and at one ulp below the interval width), plus +/-inf, NaN
+    and the out-of-support tails.
+    """
+    from digest42.backend import core_model_for
+
+    neo, other = pchip_pair
+    cm = core_model_for(neo, other)
+    rng = np.random.default_rng(20260902)
+
+    def probes(edges, n):
+        e = np.asarray(edges, dtype=float)
+        return np.concatenate(
+            [
+                e,
+                np.nextafter(e, -np.inf),
+                np.nextafter(e, +np.inf),
+                rng.uniform(e[0] - 0.5, e[-1] + 0.5, n),
+                np.array([np.inf, -np.inf, np.nan, -0.0]),
+            ]
+        )
+
+    q = probes(Q_EDGES, 4000)
+    e = probes(E_EDGES, 4000)
+    i = probes(I_EDGES, 4000)
+    h = probes(H_EDGES, 4000)
+    n = min(len(q), len(e), len(i), len(h))
+    q, e, i, h = q[:n], e[:n], i[:n], h[:n]
+    for arr in (e, i, h):
+        rng.shuffle(arr)
+
+    # A random (q, e, i, H) point almost never lands in a populated cell of
+    # the real model (the NEO component lives at q < 1.3 alone), so add draws
+    # taken from the model itself: those are guaranteed in-support and are
+    # what the classifier actually evaluates.
+    for comp in (neo, other):
+        el6, hh = comp.sample(2000, rng)
+        bound = el6[:, 1] < 1.0
+        q = np.concatenate([q, (el6[:, 0] * (1.0 - el6[:, 1]))[bound]])
+        e = np.concatenate([e, el6[bound, 1]])
+        i = np.concatenate([i, el6[bound, 2]])
+        h = np.concatenate([h, hh[bound]])
+
+    el3 = np.ascontiguousarray(np.stack([q, e, i], axis=-1))
+    want_neo = neo.density(el3, h)
+    want_other = other.density(el3, h)
+    got_neo, got_other = cm.density_at(el3, np.ascontiguousarray(h))
+    assert np.array_equal(got_neo, want_neo)
+    assert np.array_equal(got_other, want_other)
+    # Not vacuous, and genuinely the smooth branch: in-support values must be
+    # present and must differ from the piecewise-constant model.
+    assert (want_neo > 0.0).any() and (want_neo == 0.0).any()
+    hist_neo, hist_other = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    assert not np.array_equal(want_neo, hist_neo.density(el3, h))
+    assert not np.array_equal(want_other, hist_other.density(el3, h))
+
+
+def test_pchip_end_to_end_parity_on_the_gate_catalogue(pchip_pair):
+    """~120 real gate_v0 tracklets scored by both backends in pchip mode."""
+    neo, other = pchip_pair
+    worst_p = 0.0
+    worst_lam = 0.0
+    for k, (att, R, V) in enumerate(_gate_tracklets(120, seed=606)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            rp = classify(att, neo, other, R, V, backend="python", **FAST)
+            rr = classify(att, neo, other, R, V, backend="rust", **FAST)
+        _compare(rp, rr, f"pchip[{k}]")
+        if np.isfinite(rp.p_neo):
+            worst_p = max(worst_p, abs(rp.p_neo - rr.p_neo))
+        for name in ("lambda_neo", "lambda_other"):
+            x, y = getattr(rp, name), getattr(rr, name)
+            if x > 0.0 and np.isfinite(x):
+                worst_lam = max(worst_lam, abs(y - x) / x)
+    assert worst_p <= P_TOL
+    assert worst_lam <= LAM_RTOL
+    print(f"\n  pchip parity: max |dp| = {worst_p:.3e}, "
+          f"max Lambda rel = {worst_lam:.3e}")
+
+
+def test_pchip_end_to_end_parity_at_production_resolution(pchip_pair):
+    neo, other = pchip_pair
+    for k, (att, R, V) in enumerate(_gate_tracklets(4, seed=77)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            rp = classify(att, neo, other, R, V, backend="python", **PROD)
+            rr = classify(att, neo, other, R, V, backend="rust", **PROD)
+        _compare(rp, rr, f"pchip-prod[{k}]")
+
+
+def test_pchip_changes_the_answer(d2pair, pchip_pair):
+    """Not a vacuous parity test: the mode moves Lambda on real tracklets."""
+    moved = 0
+    for att, R, V in _gate_tracklets(20, seed=808):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            a = classify(att, *d2pair, R, V, backend="rust", **FAST)
+            b = classify(att, *pchip_pair, R, V, backend="rust", **FAST)
+        assert a.n_nodes == b.n_nodes          # geometry is untouched
+        assert a.n_masked_det == b.n_masked_det
+        if a.lambda_neo != b.lambda_neo or a.lambda_other != b.lambda_other:
+            moved += 1
+    assert moved >= 18, moved
+
+
+def test_pchip_batch_matches_single_calls(pchip_pair):
+    neo, other = pchip_pair
+    cases = _gate_tracklets(24, seed=505)
+    atts = [c[0] for c in cases]
+    R = np.stack([c[1] for c in cases])
+    V = np.stack([c[2] for c in cases])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        many = classify_many(atts, neo, other, R_obs=R, V_obs=V,
+                             backend="rust", diagnostics=False, **FAST)
+        for k, (att, r, v) in enumerate(cases):
+            one = classify(att, neo, other, r, v, backend="rust",
+                           diagnostics=False, **FAST)
+            assert many[k].lambda_neo == one.lambda_neo, k
+            assert many[k].lambda_other == one.lambda_other, k
+
+
+def test_model_cache_distinguishes_the_h_interpolation_mode(d2pair, pchip_pair):
+    """The fingerprint must see the mode: the density TABLE is identical.
+
+    Switching `h_interpolation` leaves `_density_table` untouched (the smooth
+    mode carries its coefficients separately), so a fingerprint that ignored
+    the mode would hand back the piecewise-constant handle and silently score
+    a different model — the same failure the D-14 clamp flag once had.
+    """
+    from digest42.backend import _fingerprint, core_model_for
+
+    hist_neo, hist_other = d2pair
+    sm_neo, sm_other = pchip_pair
+    assert np.array_equal(hist_neo._density_table, sm_neo._density_table)
+    assert _fingerprint(hist_neo) != _fingerprint(sm_neo)
+    assert _fingerprint(hist_other) != _fingerprint(sm_other)
+    a = core_model_for(hist_neo, hist_other)
+    b = core_model_for(sm_neo, sm_other)
+    assert a is not b
+    assert "h_interpolation=(\"none\", \"none\")" in repr(a)
+    assert "h_interpolation=(\"pchip\", \"pchip\")" in repr(b)
+    # and the cached handles stay distinct on a second lookup
+    assert core_model_for(hist_neo, hist_other) is a
+    assert core_model_for(sm_neo, sm_other) is b
+
+
+def test_declared_h_interpolation_without_coefficients_is_refused(d2pair):
+    """No silent downgrade to the flat table.
+
+    A component that claims a smooth mode but cannot produce coefficients is
+    `ModelNotSupported`: `auto` then runs the Python reference (which would
+    also fail loudly on such an object) and an explicit `backend="rust"`
+    raises.  It must never be scored as if it were piecewise constant.
+    """
+    from digest42.backend import ModelNotSupported, core_model_for
+
+    class Liar:
+        def __init__(self, src):
+            for name in ("q_edges", "e_edges", "i_edges", "h_edges",
+                         "parameterization", "label", "variant", "classes",
+                         "_density_table", "counts", "bin_volume"):
+                setattr(self, name, getattr(src, name))
+            self.h_top_bin_infinite = False
+            self.h_interpolation = "pchip"
+            self.h_coeffs = None
+
+    neo, other = d2pair
+    with pytest.raises(ModelNotSupported, match="h_coeffs"):
+        core_model_for(Liar(neo), other)
+
+    class WrongShape(Liar):
+        def __init__(self, src):
+            super().__init__(src)
+            self.h_coeffs = np.zeros((29, 8, 11, 18, 4))
+
+    with pytest.raises(ModelNotSupported, match="h_coeffs"):
+        core_model_for(WrongShape(neo), other)
+
+    class WrongCells(Liar):
+        def __init__(self, src):
+            super().__init__(src)
+            self.h_coeffs = np.zeros((29, 8, 11, 17, 3))
+
+    with pytest.raises(ModelNotSupported, match="h_coeffs"):
+        core_model_for(WrongCells(neo), other)
+
+    # An h_interpolation this build does not implement must be refused even
+    # when coefficients ARE supplied: the glue cannot know what polynomial
+    # form they are in, and guessing would score an arbitrary model.
+    class FutureMode(Liar):
+        def __init__(self, src):
+            super().__init__(src)
+            self.h_interpolation = "akima"
+            self.h_coeffs = np.zeros((29, 8, 11, 18, 3))
+
+    with pytest.raises(ModelNotSupported, match="does not know"):
+        core_model_for(FutureMode(neo), other)
+
+
+def test_core_model_rejects_bad_coefficient_arrays(core, d2pair):
+    """The kernel's own validation of the coefficient block.
+
+    Reachable from pure Python, so it is checked at the boundary and not only
+    in the glue: a wrong length, a non-finite entry, or the D-14 clamp
+    combination must all raise `UnsupportedModel` rather than be indexed
+    into.
+    """
+    neo, other = d2pair
+    tab = np.ascontiguousarray(neo._density_table.reshape(-1))
+    dims = tuple(int(s) for s in neo._density_table.shape)
+    n = tab.size
+    edges = (Q_EDGES, E_EDGES, I_EDGES, H_EDGES)
+    good = np.zeros(3 * n)
+
+    def build(**kw):
+        return core.CoreModel(tab, tab, dims, *edges, **kw)
+
+    # sanity: the good case builds
+    build(neo_h_coeffs=good, other_h_coeffs=good)
+    with pytest.raises(core.UnsupportedModel, match="h_coeffs"):
+        build(neo_h_coeffs=np.zeros(3 * n - 1))
+    with pytest.raises(core.UnsupportedModel, match="h_coeffs"):
+        build(neo_h_coeffs=np.zeros(3 * n + 3))
+    bad = good.copy()
+    bad[17] = np.nan
+    with pytest.raises(core.UnsupportedModel, match="finite"):
+        build(neo_h_coeffs=bad)
+    bad = good.copy()
+    bad[3] = np.inf
+    with pytest.raises(core.UnsupportedModel, match="finite"):
+        build(other_h_coeffs=bad)
+    # D-14 clamp + smooth reconstruction: refused on both sides, matching
+    # Digest2Histogram's own ValueError.
+    with pytest.raises(core.UnsupportedModel, match="h_top_bin_infinite"):
+        build(neo_h_coeffs=good, neo_h_top_bin_infinite=True)
+    with pytest.raises(core.UnsupportedModel, match="h_top_bin_infinite"):
+        build(other_h_coeffs=good, other_h_top_bin_infinite=True)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram.neo_other_pair(MODEL_PATH, h_interpolation="pchip",
+                                        h_top_bin_infinite=True)
+
+
+def test_pchip_one_sided_components_are_allowed_by_the_kernel(core, d2pair,
+                                                              pchip_pair):
+    """A mixed pair is representable in Rust; policy lives in Python.
+
+    `neo_other_pair` always gives both components the same mode (a mixed pair
+    would put a modelling artifact straight into the posterior ratio), but the
+    kernel keeps the two `Histogram`s independent, exactly as it does for the
+    D-14 flag.  Pinned so a future refactor does not quietly couple them and
+    change what the glue can express.
+    """
+    from digest42.backend import core_model_for
+
+    cm = core_model_for(pchip_pair[0], d2pair[1])
+    assert "h_interpolation=(\"pchip\", \"none\")" in repr(cm)
+    el = np.ascontiguousarray(np.array([[1.0, 0.5, 0.5], [2.5, 0.15, 0.1]]))
+    h = np.ascontiguousarray(np.array([19.3, 24.7]))
+    a, b = cm.density_at(el, h)
+    assert np.array_equal(a, pchip_pair[0].density(el, h))
+    assert np.array_equal(b, d2pair[1].density(el, h))

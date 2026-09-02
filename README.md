@@ -39,6 +39,20 @@ print(res.p_neo, res.log_lr)
 res.plot_posterior_map()   # (rho, rho_dot) diagnostic
 ```
 
+## Installation
+
+```bash
+pip install digest42            # wheels: linux x86_64, macOS arm64, Windows x64 (CPython >= 3.11)
+digest42-fetch-model            # downloads the MPC digest2 population model (~4 MB) into ./data/
+```
+
+Wheels ship the Rust-accelerated kernel (`backend="auto"` uses it automatically). On
+platforms without a wheel, `pip install digest42` builds from the sdist as a pure-Python
+package — same results via the numpy reference implementation, ~40× slower; build the
+extension later with `rust/build.sh` (needs cargo). From a source checkout:
+`pip install -e ".[dev]" && python scripts/fetch_digest2_model.py`. See
+[RELEASING.md](RELEASING.md) for the release process.
+
 ## Documentation
 
 | Document | Contents |

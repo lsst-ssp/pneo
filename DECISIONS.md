@@ -236,3 +236,29 @@ asymmetry).
 framing); JAX/GPU (still open for v1 covariance-marginalization scale); maturin wheel
 packaging (deferred: needs pyproject build-backend migration; current build is
 rust/build.sh + atomic .so install into the editable tree).
+
+## D-16: PyPI packaging — setuptools sdist, standalone-maturin wheels (2026-09-02)
+
+**Decision.** The sdist is built by setuptools (the PEP 517 backend stays
+setuptools.build_meta) and installs as pure Python everywhere — no Rust toolchain
+required, yielding the numpy reference backend that `backend="auto"` degrades to.
+Release wheels are built by maturin driven as a CLI over the `[tool.maturin]` table
+(never as the build backend), carrying `digest42._core` as abi3-py311 — one wheel per
+platform (linux x86_64, macOS arm64, Windows x64 initially; the rest via sdist).
+Publishing: `.github/workflows/release.yml` on GitHub releases, PyPI Trusted Publishing
+(OIDC, environment `pypi`, no tokens); `workflow_dispatch` is a build-only rehearsal.
+No TestPyPI path (maintainer decision). The `digest42-fetch-model` console script gives
+wheel users the model download; a LICENSE file (BSD-3-Clause) now ships in both
+artifacts.
+
+**Rationale.** Resolves D-15's deferred packaging question without disturbing anything
+proven: zero ci.yml changes (the no-extension degradation test still tests what sdist
+users get), dev flow unchanged (`pip install -e .` + `rust/build.sh`), and uncovered
+platforms install-and-work instead of failing at build time. Validated locally: wheel
+contents audited, clean-venv install + A/B smoke outside the repo tree, abi3 claim
+tested (py3.13 on the cp311 wheel), sdist round-trip through maturin, twine strict.
+
+**Alternatives.** maturin as the PEP 517 backend (rejected: forces cargo into every
+source install and hard-fails uncovered platforms); pure-Python-only package (rejected:
+shipping the kernel is the point); TestPyPI staging (removed at maintainer request —
+workflow_dispatch rehearsal covers the build side).

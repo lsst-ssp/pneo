@@ -1146,3 +1146,618 @@ def test_clamped_mode_is_documented_as_gate_ineligible():
     assert "gate-ineligible" in doc
     assert "§4.1" in doc
     assert "normalizable" in doc
+
+
+# ---------------------------------------------------------------------------
+# Smooth-in-H reconstruction (h_interpolation="pchip")
+#
+# The construction is: interpolate the CUMULATIVE count over the 19 H edges
+# with a monotone cubic, evaluate its derivative as the density.  Every test
+# below pins one of the properties that makes that safe — per-bin mass
+# conservation, non-negativity, continuity across interior edges, D-4
+# truncation, and no mass invented outside the bin it came from (the
+# WP4-review objection).  Where a quantity can be re-derived independently
+# (the PCHIP slopes, the per-bin mass by quadrature *through* density()) it is,
+# so a bug in the coefficient construction cannot hide behind the same bug in
+# the test.
+# ---------------------------------------------------------------------------
+
+GL8_X, GL8_W = np.polynomial.legendre.leggauss(8)
+
+
+@pytest.fixture(scope="module")
+def pair_pchip():
+    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="All",
+                                           h_interpolation="pchip")
+
+
+def cell_centres():
+    """(n_cells, 3) centres of every (q, e, i) cell, in the qei parameterization."""
+    q = 0.5 * (np.concatenate(([0.0], REF_QPART[:-1])) + REF_QPART)
+    e = 0.5 * (np.concatenate(([0.0], REF_EPART[:-1])) + REF_EPART)
+    i = np.radians(
+        0.5 * (np.concatenate(([0.0], REF_IPART_DEG[:-1])) + REF_IPART_DEG)
+    )
+    Q, E, I = np.meshgrid(q, e, i, indexing="ij")
+    return np.stack((Q, E, I), axis=-1).reshape(-1, 3)
+
+
+def qei_volume_flat():
+    """dq * de * di[rad] per cell, flattened to match :func:`cell_centres`."""
+    dq = np.diff(np.concatenate(([0.0], REF_QPART)))
+    de = np.diff(np.concatenate(([0.0], REF_EPART)))
+    di = np.diff(np.radians(np.concatenate(([0.0], REF_IPART_DEG))))
+    return (dq[:, None, None] * de[None, :, None] * di[None, None, :]).reshape(-1)
+
+
+def naive_pchip_slopes(x, y):
+    """Scalar, loop-based Fritsch-Carlson transcription (no numpy tricks).
+
+    Written from the published construction, not from population.py:
+    interior slopes are the weighted harmonic mean of the neighbouring
+    secants (zero where they change sign or either vanishes), end slopes are
+    the one-sided three-point estimate with the sign and 3-delta limiters.
+    """
+    n = len(x) - 1
+    h = [x[k + 1] - x[k] for k in range(n)]
+    d = [(y[k + 1] - y[k]) / h[k] for k in range(n)]
+    m = [0.0] * (n + 1)
+    for k in range(1, n):
+        if d[k - 1] * d[k] > 0.0:
+            w1 = 2.0 * h[k] + h[k - 1]
+            w2 = h[k] + 2.0 * h[k - 1]
+            m[k] = (w1 + w2) / (w1 / d[k - 1] + w2 / d[k])
+        else:
+            m[k] = 0.0
+
+    def end(h0, h1, d0, d1):
+        v = ((2.0 * h0 + h1) * d0 - h0 * d1) / (h0 + h1)
+        if math.copysign(1.0, v) != math.copysign(1.0, d0):
+            return 0.0
+        if (math.copysign(1.0, d0) != math.copysign(1.0, d1)
+                and abs(v) > 3.0 * abs(d0)):
+            return 3.0 * d0
+        return v
+
+    m[0] = end(h[0], h[1], d[0], d[1])
+    m[n] = end(h[n - 1], h[n - 2], d[n - 1], d[n - 2])
+    return m
+
+
+def test_pchip_slopes_match_an_independent_transcription():
+    from digest42.population import _pchip_slopes
+
+    rng = np.random.default_rng(4242)
+    x = np.array([0.0, 0.3, 1.0, 1.1, 4.0, 9.0, 9.5])
+    for trial in range(200):
+        # Non-decreasing data, including flats and hard steps — exactly the
+        # shapes a sparse cumulative count produces.
+        inc = rng.choice([0.0, 0.0, 1e-9, 1.0, 1e4], size=x.size - 1)
+        y = np.concatenate(([0.0], np.cumsum(inc)))
+        m, _ = _pchip_slopes(x, y)
+        ref = naive_pchip_slopes(list(x), list(y))
+        # rtol, not exact equality: the reference evaluates the harmonic mean
+        # as (w1+w2)/(w1/d0 + w2/d1) and the implementation as its reciprocal
+        # form 1/whmean (which is what scipy does, and what the next test
+        # pins).  Algebraically the same, different last bit.
+        assert np.allclose(m, ref, rtol=1e-14, atol=0.0), (trial, m, ref)
+
+
+def test_pchip_slopes_match_scipy_when_scipy_is_installed():
+    """Cross-check against the canonical implementation, if it is importable.
+
+    scipy is NOT a digest42 dependency [D-9] — hence the hand transcription in
+    the test above, which is the load-bearing check.  When scipy happens to be
+    present this pins us to the same construction the rest of the world calls
+    PCHIP.
+    """
+    interp = pytest.importorskip("scipy.interpolate")
+    from digest42.population import _pchip_slopes
+
+    rng = np.random.default_rng(99)
+    x = np.array([0.0, 6.0, 8.0, 10.0, 11.0, 12.0, 25.5])
+    for _ in range(50):
+        y = np.concatenate(
+            ([0.0], np.cumsum(rng.choice([0.0, 1.0, 700.0], size=x.size - 1)))
+        )
+        m, _ = _pchip_slopes(x, y)
+        sp = interp.PchipInterpolator(x, y)
+        # PPoly coefficients: p(x) = c0 s^3 + c1 s^2 + c2 s + c3, so c[2] IS
+        # scipy's slope at each interval's left knot.  Compared bit-exactly.
+        assert np.array_equal(m[:-1], sp.c[2]), (m[:-1], sp.c[2])
+        # The right-hand end knot has no interval of its own; scipy can only
+        # be asked for it by evaluating the last segment's derivative at its
+        # right end, which costs a couple of ulp of the segment's scale.
+        scale = max(1e-300, float(np.abs(np.diff(y) / np.diff(x)).max()))
+        assert abs(m[-1] - float(sp(x[-1], 1))) < 1e-12 * scale
+
+
+def test_pchip_slopes_obey_the_monotonicity_bound(pair_pchip):
+    """0 <= m_k <= 3 min(delta_{k-1}, delta_k) — the Fritsch-Carlson condition.
+
+    This is the *mechanism* behind non-negativity and mass containment, so it
+    is asserted directly on the shipped model rather than only through its
+    consequences.  ``alpha, beta in [0, 3]`` puts every interval inside the
+    monotonicity region, which is what makes C' >= 0.
+    """
+    from digest42.population import _pchip_slopes
+    from digest42.population import H_EDGES
+
+    for comp in pair_pchip:
+        cum = np.zeros(comp.counts.shape[:3] + (19,))
+        cum[..., 1:] = np.cumsum(comp.counts, axis=-1)
+        m, delta = _pchip_slopes(H_EDGES, cum)
+        assert m.min() >= 0.0
+        assert delta.min() >= 0.0
+        # every interval: both end slopes within 3x its own secant
+        for k in range(18):
+            lim = 3.0 * delta[..., k]
+            assert np.all(m[..., k] <= lim + 1e-9 * np.maximum(lim, 1.0))
+            assert np.all(m[..., k + 1] <= lim + 1e-9 * np.maximum(lim, 1.0))
+
+
+def test_pchip_mass_is_conserved_in_every_h_bin_of_every_cell(pair_pchip):
+    """(a) EXACT per-bin mass conservation, measured through density().
+
+    8-node Gauss-Legendre is exact for the quadratic that density() evaluates,
+    so this integrates the *reconstructed density itself* — not the
+    coefficients' antiderivative — over all 2552 x 18 (cell, H bin) pairs of
+    both components and compares to the stored object counts.
+    """
+    el = cell_centres()
+    vol = qei_volume_flat() * ANGLE_VOLUME
+    edges = np.concatenate(([0.0], REF_HPART))
+    for comp in pair_pchip:
+        counts = np.asarray(comp.counts).reshape(-1, len(REF_HPART))
+        worst_rel = 0.0
+        worst_abs = 0.0
+        for k in range(len(REF_HPART)):
+            lo, hi = edges[k], edges[k + 1]
+            half = 0.5 * (hi - lo)
+            acc = np.zeros(el.shape[0])
+            for xg, wg in zip(GL8_X, GL8_W):
+                h = half * xg + 0.5 * (hi + lo)
+                acc += wg * comp.density(el, np.full(el.shape[0], h))
+            mass = half * acc * vol
+            dev = np.abs(mass - counts[:, k])
+            nz = counts[:, k] > 0
+            worst_abs = max(worst_abs, float(dev.max()))
+            if nz.any():
+                worst_rel = max(
+                    worst_rel, float((dev[nz] / counts[nz, k]).max())
+                )
+            # empty bins must be EXACTLY empty, not almost
+            assert np.all(mass[~nz] == 0.0)
+        assert worst_rel < 1e-12, (comp.label, worst_rel)
+        assert worst_abs < 1e-6, (comp.label, worst_abs)
+
+
+def test_pchip_mass_identity_holds_from_the_coefficients(pair_pchip):
+    """The same guarantee straight off the coefficient table, to 1e-12 rel.
+
+    ``int_0^dH (a + b s + c s^2) ds = a dH + b dH^2/2 + c dH^3/3`` must be the
+    bin's object count.  Cheap enough to run over every cell of both
+    components, which the quadrature version above also does — the two agree
+    because the quadrature is exact for a quadratic.
+    """
+    dH = np.diff(np.concatenate(([0.0], REF_HPART)))
+    for comp in pair_pchip:
+        a, b, c = (comp.h_coeffs[..., i] for i in range(3))
+        integral = a * dH + b * dH**2 / 2.0 + c * dH**3 / 3.0
+        mass = integral * (
+            np.asarray(comp.qei_volume)[..., None] * ANGLE_VOLUME
+        )
+        counts = np.asarray(comp.counts)
+        nz = counts > 0
+        rel = np.abs(mass[nz] - counts[nz]) / counts[nz]
+        assert rel.max() < 1e-12, (comp.label, rel.max())
+        assert np.all(mass[~nz] == 0.0)
+
+
+def test_pchip_density_is_non_negative_on_a_dense_sweep(pair_pchip):
+    """(b) C' >= 0 everywhere, checked on 200 points per H bin x every cell."""
+    el = cell_centres()
+    edges = np.concatenate(([0.0], REF_HPART))
+    frac = np.linspace(0.0, 1.0, 201)[:-1]      # [0, 1): half-open, like the bin
+    worst = np.inf
+    for comp in pair_pchip:
+        for k in range(len(REF_HPART)):
+            for f in frac:
+                h = edges[k] + f * (edges[k + 1] - edges[k])
+                d = comp.density(el, np.full(el.shape[0], h))
+                worst = min(worst, float(d.min()))
+        assert worst >= 0.0, (comp.label, worst)
+    # 0.0 is attained (empty cells, and the flat ends of sparse ones), so the
+    # bound is tight, not vacuous.
+    assert worst == 0.0
+
+
+def test_pchip_is_continuous_across_every_interior_h_edge(pair_pchip):
+    """(c) both one-sided limits agree at all 17 interior edges, every cell.
+
+    Measured relative to each cell's own peak density, because the absolute
+    scale spans ~15 decades across cells.  Continuity is structural: PCHIP is
+    C1, so its derivative is C0 — the coefficient identity ``a_{k} =
+    (a + s(b + sc))|_{s = dH}`` of interval k-1 is what is checked here.
+    """
+    el = cell_centres()
+    edges = np.concatenate(([0.0], REF_HPART))
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    for comp in pair_pchip:
+        scale = np.maximum(
+            np.max([comp.density(el, np.full(el.shape[0], h))
+                    for h in centres], axis=0),
+            np.finfo(float).tiny,
+        )
+        for k in range(1, len(REF_HPART)):
+            e = edges[k]
+            left = comp.density(el, np.full(el.shape[0], np.nextafter(e, -1.0)))
+            right = comp.density(el, np.full(el.shape[0], e))
+            rel = np.abs(left - right) / scale
+            assert rel.max() < 1e-12, (comp.label, e, rel.max())
+
+
+def test_pchip_is_exactly_zero_outside_the_h_support(pair_pchip):
+    """(d) D-4 unchanged: 0.0 below 0 and at/above 25.5, bit-exactly."""
+    el = cell_centres()
+    for comp in pair_pchip:
+        for h in (-np.finfo(float).tiny, -1e-9, -1.0, -1e9,
+                  25.5, np.nextafter(25.5, 100.0), 26.0, 1e9,
+                  np.inf, -np.inf, np.nan):
+            d = comp.density(el, np.full(el.shape[0], h))
+            assert np.all(d == 0.0), (comp.label, h, d.max())
+
+
+def test_pchip_density_is_discontinuous_at_the_support_endpoints(pair_pchip):
+    """(d, second half) The endpoint jumps are REAL and documented.
+
+    The density outside is exactly 0 (D-4), and just inside it is *generally*
+    non-zero, so both support endpoints carry a real jump.  "Generally", not
+    "always": at a cell whose next bin is very much more populated the
+    one-sided three-point end slope comes out with the wrong sign and PCHIP's
+    shape-preserving limiter sets it to exactly 0 — which is the interpolant
+    doing its job, and leaves that cell's endpoint value continuous with the
+    zero outside.  So the assertion is that the jump happens for a
+    substantial fraction of populated cells, plus a deterministic synthetic
+    case at each end.  Either way it is a documented property, not a defect:
+    the histogram mode has the very same two jumps.
+    """
+    el = cell_centres()
+    for comp in pair_pchip:
+        counts = np.asarray(comp.counts)
+        for k, h_in in ((0, 0.0), (-1, np.nextafter(25.5, 0.0))):
+            pop = counts[..., k].reshape(-1) > 0
+            if not pop.any():
+                # The NEO component has no object with H < 6; only "other"
+                # (268 of them) exercises the bright end on the real file.
+                assert comp.label == "NEO" and k == 0
+                continue
+            d_in = comp.density(el, np.full(el.shape[0], h_in))
+            assert np.all(d_in[pop] >= 0.0)
+            # A real jump at a good fraction of the populated cells.
+            # Measured on the All variant: bright end (H = 0) 15.7% of
+            # "other"'s 159 populated cells — the size distribution rises so
+            # steeply out of [0, 6) that the limiter zeroes most of them;
+            # faint end (H -> 25.5) 100% of NEO's and 100% of other's, because
+            # the top bin is where the mass is.
+            assert (d_in[pop] > 0.0).mean() > 0.1, (comp.label, k)
+        # exactly zero a hair outside, on every cell
+        assert comp.density(el, np.full(el.shape[0],
+                                        -np.finfo(float).tiny)).max() == 0.0
+        assert comp.density(el, np.full(el.shape[0], 25.5)).max() == 0.0
+
+    # Deterministic single-bin cells: mass only in the first (resp. last) H
+    # bin, so the end slope has nothing to be limited against and the jump is
+    # unambiguous.
+    hot = np.array([[0.85, 0.25, np.radians(17.0)]])
+    for k, h_in, h_out in ((0, 0.0, -np.finfo(float).tiny),
+                           (17, np.nextafter(25.5, 0.0), 25.5)):
+        counts = np.zeros(MODEL_SHAPE)
+        counts[3, 2, 4, k] = 500.0
+        comp = Digest2Histogram(counts, "other", h_interpolation="pchip")
+        assert comp.density(hot, np.array([h_in]))[0] > 0.0
+        assert comp.density(hot, np.array([h_out]))[0] == 0.0
+
+    for doc in (Digest2Histogram.__doc__,
+                __import__("digest42.population", fromlist=["x"]).__doc__):
+        assert "discontinuous" in doc
+
+
+def test_pchip_leaves_totals_support_and_qei_lookup_untouched(pair_all, pair_pchip):
+    """(e) total_count, support and the q/e/i/H bin lookup are bit-identical."""
+    rng = np.random.default_rng(2026)
+    n = 200_000
+    el = np.stack((rng.uniform(-1.0, 110.0, n),
+                   rng.uniform(-0.05, 1.2, n),
+                   rng.uniform(-0.05, 3.2, n)), axis=-1)
+    h = rng.uniform(-1.0, 27.0, n)
+    for hist, smooth in zip(pair_all, pair_pchip):
+        assert smooth.total_count == hist.total_count
+        assert smooth.support == hist.support
+        assert smooth.support["H"] == (0.0, 25.5)
+        a = hist.bin_indices(el, h)
+        b = smooth.bin_indices(el, h)
+        for x, y in zip(a, b):
+            assert np.array_equal(x, y)
+        # in-support decisions, hence the entire zero pattern of density(),
+        # must be identical too
+        assert np.array_equal(hist.density(el, h) == 0.0,
+                              smooth.density(el, h) == 0.0)
+        assert np.asarray(smooth.counts).tobytes() == np.asarray(hist.counts).tobytes()
+
+
+def test_pchip_reduces_to_the_histogram_when_the_cell_is_flat_in_h():
+    """A cell whose counts are proportional to dH is *already* flat in H.
+
+    Then the cumulative count is exactly linear, PCHIP reproduces the straight
+    line, and the reconstructed density must agree with the piecewise-constant
+    one.  This is the one configuration where the two modes are required to
+    coincide, and it catches a wrong bin volume, a wrong dH, or a mis-scaled
+    coefficient — none of which the mass-conservation tests can see, because
+    they compare against the same counts either way.
+    """
+    dH = np.diff(np.concatenate(([0.0], REF_HPART)))
+    counts = np.zeros(MODEL_SHAPE)
+    counts[5, 3, 6, :] = 1000.0 * dH
+    counts[0, 0, 0, :] = 7.0 * dH
+    hist = Digest2Histogram(counts, "other")
+    smooth = Digest2Histogram(counts, "other", h_interpolation="pchip")
+    el = cell_centres()
+    for h in np.linspace(0.0, 25.49, 400):
+        a = hist.density(el, np.full(el.shape[0], h))
+        b = smooth.density(el, np.full(el.shape[0], h))
+        assert np.allclose(a, b, rtol=1e-13, atol=0.0), h
+
+
+def test_pchip_confines_a_sparse_cell_to_its_own_bin():
+    """The WP4-review "interpolation invents density" objection, answered.
+
+    A cell with counts in ONE H bin keeps all of its mass in that bin and has
+    identically zero density in every other bin — including when the populated
+    bin is the first or the last, where the end-slope formula is in play.  The
+    mechanism is monotonicity plus interpolation of the exact cumulative
+    count; nothing here is a tuned tolerance.
+    """
+    el = np.array([[0.85, 0.25, np.radians(17.0)]])
+    edges = np.concatenate(([0.0], REF_HPART))
+    vol = float(
+        (0.9 - 0.8) * (0.3 - 0.2) * np.radians(20.0 - 15.0)
+    ) * ANGLE_VOLUME
+    for populated in range(len(REF_HPART)):
+        counts = np.zeros(MODEL_SHAPE)
+        counts[3, 2, 4, populated] = 1234.0
+        comp = Digest2Histogram(counts, "other", h_interpolation="pchip")
+        for k in range(len(REF_HPART)):
+            lo, hi = edges[k], edges[k + 1]
+            half = 0.5 * (hi - lo)
+            acc = 0.0
+            for xg, wg in zip(GL8_X, GL8_W):
+                acc += wg * float(
+                    comp.density(el, np.array([half * xg + 0.5 * (hi + lo)]))[0]
+                )
+            mass = half * acc * vol
+            if k == populated:
+                assert abs(mass - 1234.0) < 1e-9, (populated, k, mass)
+            else:
+                # exactly zero: the interpolant is CONSTANT on an empty
+                # interval (both end slopes vanish), so the density is 0.0
+                assert mass == 0.0, (populated, k, mass)
+
+
+def test_pchip_empty_cell_invents_nothing():
+    """A cell with zero total has zero density at every H.  No exceptions."""
+    comp = Digest2Histogram(np.zeros(MODEL_SHAPE), "other",
+                            h_interpolation="pchip")
+    el = cell_centres()
+    for h in np.linspace(0.0, 25.4999, 500):
+        assert np.all(comp.density(el, np.full(el.shape[0], h)) == 0.0)
+    assert comp.total_count == 0.0
+    assert np.all(np.asarray(comp.h_coeffs) == 0.0)
+
+
+def test_pchip_sample_stays_inside_the_drawn_bin_and_the_support(pair_pchip):
+    for comp in pair_pchip:
+        rng = np.random.default_rng(31337)
+        el6, h = comp.sample(300_000, rng)
+        assert np.all(np.isfinite(h))
+        assert h.min() >= 0.0 and h.max() < 25.5
+        # the drawn H must fall in a bin the cell actually has counts in
+        q = el6[:, 0] * (1.0 - el6[:, 1])
+        iq, ie, ii, ih, ok = comp.bin_indices(
+            np.stack((q, el6[:, 1], el6[:, 2]), axis=-1), h
+        )
+        bound = el6[:, 1] < 1.0
+        assert np.all(ok[bound])
+        assert np.all(np.asarray(comp.counts)[iq[bound], ie[bound],
+                                              ii[bound], ih[bound]] > 0.0)
+
+
+def test_pchip_sample_leaves_the_elements_bit_identical(pair_all, pair_pchip):
+    """Only the within-bin H draw changes; (a, e, i, Omega, omega, M) do not.
+
+    The pchip sampler consumes exactly one uniform per draw for H, in the same
+    position in the stream as the histogram sampler's, so with the same seed
+    every other column comes out bit-for-bit identical — which is the
+    strongest available statement of "elements handling unchanged".
+    """
+    for hist, smooth in zip(pair_all, pair_pchip):
+        a6, ah = hist.sample(50_000, np.random.default_rng(7))
+        b6, bh = smooth.sample(50_000, np.random.default_rng(7))
+        assert np.array_equal(a6, b6)
+        assert not np.array_equal(ah, bh)          # H really did change
+        # and the H bin each draw lands in is the same one
+        el = np.stack((a6[:, 0] * (1.0 - a6[:, 1]), a6[:, 1], a6[:, 2]), -1)
+        assert np.array_equal(hist.bin_indices(el, ah)[3],
+                              smooth.bin_indices(el, bh)[3])
+
+
+@pytest.mark.parametrize("comp_index,name", [(0, "NEO"), (1, "other")])
+def test_pchip_sample_reproduces_the_analytic_density(pair_pchip, comp_index,
+                                                      name):
+    """chi-square of 2e6 draws against the analytic mass on FINE sub-bins.
+
+    Eight sub-bins per H bin (144 total): far finer than the histogram the
+    bin *selection* reproduces, so this tests the inverse-CDF draw inside the
+    bin, i.e. that sample() and density() describe the same distribution.
+    The expected masses are the coefficients' exact antiderivative summed over
+    cells, so a mis-inverted CDF cannot cancel against a matching bug.
+    """
+    comp = pair_pchip[comp_index]
+    assert comp.label == name
+    m = 8
+    edges = np.concatenate(([0.0], REF_HPART))
+    vol = (np.asarray(comp.qei_volume) * ANGLE_VOLUME)
+    co = comp.h_coeffs
+    sub_edges = []
+    expected = []
+    for k in range(len(REF_HPART)):
+        lo, hi = edges[k], edges[k + 1]
+        s = np.linspace(0.0, hi - lo, m + 1)
+        a, b, c = co[..., k, 0], co[..., k, 1], co[..., k, 2]
+
+        def anti(t):
+            return t * (a + t * (0.5 * b + t * c / 3.0))
+
+        for j in range(m):
+            expected.append(float(((anti(s[j + 1]) - anti(s[j])) * vol).sum()))
+            sub_edges.append(lo + s[j])
+    sub_edges.append(25.5)
+    expected = np.array(expected)
+    # sanity: the sub-bin masses must sum to the component's total count
+    assert abs(expected.sum() - comp.total_count) < 1e-6
+
+    n = 2_000_000
+    _, h = comp.sample(n, np.random.default_rng(20260902))
+    obs, _ = np.histogram(h, bins=np.array(sub_edges))
+    exp = expected / expected.sum() * n
+    use = exp > 20.0
+    chi2 = float((((obs[use] - exp[use]) ** 2) / exp[use]).sum())
+    dof = int(use.sum()) - 1
+    # chi2/dof ~ 1 +- sqrt(2/dof); 1.45 is ~5 sigma at dof = 93
+    assert chi2 / dof < 1.45, (name, chi2 / dof, dof)
+    assert np.abs((obs[use] - exp[use]) / np.sqrt(exp[use])).max() < 5.0
+
+
+def test_pchip_sample_inversion_is_converged(pair_pchip):
+    """The safeguarded Newton solve reaches machine precision.
+
+    Re-derives the residual of the inverse-CDF solve for 2e5 random
+    (cell, bin, u) triples using the same coefficients the sampler uses:
+    |C(s) - u C(dH)| / C(dH) must be at the 1e-15 level, so the drawn H is the
+    exact quantile to double precision and the chi-square test above is not
+    passing on a wide tolerance.
+    """
+    comp = pair_pchip[1]
+    co = comp.h_coeffs
+    counts = np.asarray(comp.counts)
+    rng = np.random.default_rng(5)
+    nz = np.argwhere(counts > 0)
+    sel = nz[rng.integers(0, len(nz), 200_000)]
+    iq, ie, ii, ih = (sel[:, k] for k in range(4))
+    a, b, c = (co[iq, ie, ii, ih, k] for k in range(3))
+    w = (comp.h_edges[ih + 1] - comp.h_edges[ih]).astype(float)
+
+    def cdf(s):
+        return s * (a + s * (0.5 * b + s * c / 3.0))
+
+    total = cdf(w)
+    target = rng.random(len(iq)) * total
+    lo = np.zeros_like(w)
+    hi = w.copy()
+    s = w * (target / total)
+    for it in range(60):
+        f = cdf(s) - target
+        lo = np.where(f <= 0.0, s, lo)
+        hi = np.where(f > 0.0, s, hi)
+        mid = 0.5 * (lo + hi)
+        d = a + s * (b + s * c)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cand = s - np.where(d > 0.0, f / d, np.nan)
+        take = np.isfinite(cand) & (cand > lo) & (cand < hi) & (it % 5 != 4)
+        s = np.where(take, cand, mid)
+    res = np.abs(cdf(s) - target) / total
+    assert res.max() < 1e-13, res.max()
+
+
+def test_pchip_and_the_d14_clamp_are_mutually_exclusive():
+    counts = np.zeros(MODEL_SHAPE)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram(counts, "other", h_interpolation="pchip",
+                         h_top_bin_infinite=True)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+                                        h_interpolation="pchip",
+                                        h_top_bin_infinite=True)
+    with pytest.raises(ValueError, match="h_top_bin_infinite"):
+        Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+                                      h_interpolation="pchip",
+                                      h_top_bin_infinite=True)
+    # each alone is fine
+    assert Digest2Histogram(counts, "other",
+                            h_interpolation="pchip").h_coeffs is not None
+    assert Digest2Histogram(counts, "other",
+                            h_top_bin_infinite=True).h_coeffs is None
+
+
+@pytest.mark.parametrize("bad", ["linear", "cubic", "spline", "None", "",
+                                 "PCHIP", "pchip "])
+def test_unknown_h_interpolation_names_the_valid_options(bad):
+    from digest42.population import H_INTERPOLATIONS
+
+    with pytest.raises(ValueError) as ei:
+        Digest2Histogram(np.zeros(MODEL_SHAPE), "other", h_interpolation=bad)
+    msg = str(ei.value)
+    assert repr(bad) in msg
+    for opt in H_INTERPOLATIONS:
+        assert repr(opt) in msg
+
+
+def test_h_interpolation_passes_through_the_factories():
+    for mode in ("none", "pchip"):
+        pair = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+                                               h_interpolation=mode)
+        assert [c.h_interpolation for c in pair] == [mode, mode]
+        assert all((c.h_coeffs is None) == (mode == "none") for c in pair)
+        one = Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+                                            h_interpolation=mode)
+        assert one.h_interpolation == mode
+    # the default is the D-10 histogram everywhere
+    assert [c.h_interpolation for c in
+            Digest2Histogram.neo_other_pair(MODEL_PATH, "All")] \
+        == ["none", "none"]
+    assert Digest2Histogram(np.zeros(MODEL_SHAPE), "x").h_interpolation == "none"
+    assert "h_interpolation='pchip'" in repr(
+        Digest2Histogram(np.zeros(MODEL_SHAPE), "x", h_interpolation="pchip")
+    )
+    assert "h_interpolation" not in repr(Digest2Histogram(np.zeros(MODEL_SHAPE), "x"))
+
+
+def test_pchip_coefficient_table_is_read_only_and_small(pair_pchip):
+    for comp in pair_pchip:
+        co = comp.h_coeffs
+        assert co.shape == MODEL_SHAPE + (3,)
+        assert not co.flags.writeable
+        with pytest.raises(ValueError):
+            co[0, 0, 0, 0, 0] = 1.0
+        # 2552 cells x 18 intervals x 3 coefficients: ~1.1 MB per component.
+        assert co.nbytes < 2 * 1024 * 1024
+
+
+def test_full_qei_interpolation_is_still_refused_and_points_at_the_h_knob():
+    with pytest.raises(NotImplementedError) as ei:
+        Digest2Histogram(np.zeros(MODEL_SHAPE), "other", interpolate=True)
+    assert "h_interpolation='pchip'" in str(ei.value)
+
+
+def test_pchip_mode_documents_what_it_does_not_fix():
+    """DESIGN §2.5 has two separate quadrature problems; this fixes one.
+
+    The docstrings must not let a reader believe the smooth mode also cures
+    the 1/(e sin i) integrable singularity — that lives on the e and i bin
+    edges and is a property of the measure, not of the H reconstruction.
+    """
+    doc = __import__("digest42.population", fromlist=["x"]).__doc__
+    assert "e sin i" in doc
+    assert "staircase" in doc
+    assert "cumulative" in doc
+    assert "invents density" in doc

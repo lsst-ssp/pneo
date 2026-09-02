@@ -47,7 +47,13 @@ Limitations of the Rust backend (it falls back to Python unless
 ``backend="rust"`` was passed explicitly):
 
 * both components must be :class:`digest42.population.Digest2Histogram`-shaped,
-  i.e. expose a 4-D ``(q, e, i, H)`` density table on the same bin edges;
+  i.e. expose a 4-D ``(q, e, i, H)`` density table on the same bin edges.  A
+  component in the smooth-in-H mode must additionally expose the matching
+  ``h_coeffs``; the kernel evaluates the very same Horner form on the very same
+  precomputed coefficients, which makes the two backends bit-identical there
+  rather than merely close.  A declared ``h_interpolation`` the glue cannot
+  hand over raises :class:`ModelNotSupported` — it never falls back to the
+  piecewise-constant table, which would silently score a different model;
 * the bin structure must be representable: strictly increasing finite edges, a
   finite non-negative table, and a cell count that fits in a machine word.
   Anything else raises :class:`ModelNotSupported` (the kernel's own
@@ -235,6 +241,45 @@ def _edges_of(density) -> list[np.ndarray]:
         ) from exc
 
 
+def _h_coeffs_of(density) -> np.ndarray | None:
+    """The smooth-in-H Horner coefficients of a component, or None.
+
+    ``h_interpolation="none"`` (or a component that does not know about the
+    knob at all) gives ``None`` and the kernel uses the flat density table.
+    Anything else *must* hand over usable coefficients: an unknown mode, or a
+    ``"pchip"`` component whose coefficients are missing or the wrong shape, is
+    :class:`ModelNotSupported` — never a silent downgrade to the
+    piecewise-constant table, which would be a different model scored under the
+    same name.
+    """
+    from .population import H_INTERPOLATIONS
+
+    mode = str(getattr(density, "h_interpolation", "none"))
+    if mode == "none":
+        return None
+    if mode not in H_INTERPOLATIONS:
+        raise ModelNotSupported(
+            f"{type(density).__name__} declares h_interpolation={mode!r}, "
+            f"which this build does not know (valid: "
+            f"{', '.join(H_INTERPOLATIONS)}); refusing to guess how to "
+            "evaluate it"
+        )
+    co = getattr(density, "h_coeffs", None)
+    if co is None:
+        raise ModelNotSupported(
+            f"{type(density).__name__} declares h_interpolation={mode!r} but "
+            "exposes no h_coeffs; the Rust backend cannot reconstruct the "
+            "smooth H dependence on its own"
+        )
+    co = np.ascontiguousarray(np.asarray(co, dtype=float))
+    if co.ndim != 5 or co.shape[-1] != 3:
+        raise ModelNotSupported(
+            f"{type(density).__name__}.h_coeffs has shape {co.shape}, expected "
+            "(n_q, n_e, n_i, n_h, 3)"
+        )
+    return co
+
+
 def _fingerprint(density) -> tuple:
     """A cache key that changes when the component's *content* changes.
 
@@ -245,9 +290,15 @@ def _fingerprint(density) -> tuple:
     (measured: 63% divergence in Lambda, silently).
 
     The fingerprint therefore carries every field the Rust side copies —
-    parameterization, the D-14 clamp flag, the provenance strings and the bin
+    parameterization, the D-14 clamp flag, the ``h_interpolation`` mode and a
+    content check on its coefficients, the provenance strings and the bin
     shape — plus a cheap content check on the density table: its buffer
     address, its exact sum, and a hash of a strided sample.
+
+    ``h_interpolation`` has to be in here for exactly the same reason as the
+    D-14 flag: switching the mode changes what the kernel must evaluate but
+    leaves the density *table* untouched, so a fingerprint that ignored it
+    would hand back a stale piecewise-constant handle for a smooth model.
 
     Residual assumption, deliberately not defended against: an in-place edit
     that preserves the buffer address, the shape, the exact sum *and* every
@@ -269,11 +320,24 @@ def _fingerprint(density) -> tuple:
         addr = int(tab.__array_interface__["data"][0])
     except (AttributeError, KeyError, TypeError):  # pragma: no cover
         addr = -1
+    co = getattr(density, "h_coeffs", None)
+    if co is None:
+        co_key: tuple = ()
+    else:
+        cf = np.ascontiguousarray(np.asarray(co, dtype=float)).reshape(-1)
+        cstep = max(1, cf.size // 512)
+        co_key = (
+            cf.size,
+            float(cf.sum()),
+            hash(cf[::cstep].tobytes()),
+        )
     return (
         type(density).__module__,
         type(density).__qualname__,
         str(getattr(density, "parameterization", None)),
         bool(getattr(density, "h_top_bin_infinite", False)),
+        str(getattr(density, "h_interpolation", "none")),
+        co_key,
         str(getattr(density, "label", "")),
         str(getattr(density, "variant", "")),
         str(getattr(density, "classes", "")),
@@ -345,6 +409,15 @@ def core_model_for(neo, other):
 
 
 def _build_core_model(core, tabs, e_neo, params, neo, other):
+    coeffs = []
+    for d, tab in ((neo, tabs[0]), (other, tabs[1])):
+        co = _h_coeffs_of(d)
+        if co is not None and co.shape[:4] != tab.shape:
+            raise ModelNotSupported(
+                f"{type(d).__name__}.h_coeffs has cell shape {co.shape[:4]} "
+                f"but its density table has shape {tab.shape}"
+            )
+        coeffs.append(None if co is None else np.ascontiguousarray(co.reshape(-1)))
     return core.CoreModel(
         np.ascontiguousarray(tabs[0].reshape(-1)),
         np.ascontiguousarray(tabs[1].reshape(-1)),
@@ -361,6 +434,8 @@ def _build_core_model(core, tabs, e_neo, params, neo, other):
         ),
         neo_label=str(getattr(neo, "label", "NEO")),
         other_label=str(getattr(other, "label", "other")),
+        neo_h_coeffs=coeffs[0],
+        other_h_coeffs=coeffs[1],
     )
 
 
