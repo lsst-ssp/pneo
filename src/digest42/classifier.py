@@ -924,7 +924,11 @@ def classify(
     Backend differences.  The two paths are held to |dp_neo| <= 1e-6 and 1e-5
     relative on each Lambda by ``tests/test_backend_parity.py``, and both mask
     counters agree exactly: the Rust kernel reproduces WP2's conditioning guard
-    itself rather than approximating it (``rust/src/guard.rs``).  Measured on
+    itself rather than approximating it (``rust/src/guard.rs``).  The rho
+    quadrature axis is computed once in Python by
+    :func:`digest42.backend.rho_axis` -- the same ``np.geomspace`` call
+    ``build_grid`` makes -- and handed to the kernel, so the two backends
+    integrate over a bit-identical grid on every numpy build and CPU.  Measured on
     the stored gate_v0 catalogue (``validation/backend_parity.py``): max
     |dp_neo| ~ 2e-16, max Lambda relative error ~4e-13, identical
     ``n_masked_nonfinite`` and ``n_masked_det`` node counts.

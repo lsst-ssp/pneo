@@ -405,7 +405,7 @@ fn outcome_to_dict<'py>(py: Python<'py>, o: Outcome) -> PyResult<Bound<'py, PyDi
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
-    model, variants, weights, R_obs, V_obs, rho_min, rho_max, n_rho, n_rhodot,
+    model, variants, weights, R_obs, V_obs, rho_nodes, d_rho, n_rhodot,
     G, diagnostics=false,
 ))]
 #[allow(non_snake_case)]
@@ -416,15 +416,20 @@ fn classify_core<'py>(
     weights: PyReadonlyArray1<f64>,
     R_obs: PyReadonlyArray1<f64>,
     V_obs: PyReadonlyArray1<f64>,
-    rho_min: f64,
-    rho_max: f64,
-    n_rho: i64,
+    rho_nodes: PyReadonlyArray1<f64>,
+    d_rho: PyReadonlyArray1<f64>,
     n_rhodot: i64,
     G: f64,
     diagnostics: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let cfg = GridCfg::new(rho_min, rho_max, n_rho, n_rhodot)
+    let rho_nodes = rho_nodes.as_slice()?;
+    let d_rho = d_rho.as_slice()?;
+    let cfg = GridCfg::new(rho_nodes, d_rho, n_rhodot)
         .map_err(PyValueError::new_err)?;
+    // Owned copies so the node loop can run with the GIL released.  ~9.6 kB at
+    // n_rho = 1200; measured cost below the benchmark's noise floor.
+    let rho_nodes = rho_nodes.to_vec();
+    let d_rho = d_rho.to_vec();
 
     let v = variants.as_array();
     let (k, ncol) = (v.shape()[0], v.shape()[1]);
@@ -461,6 +466,8 @@ fn classify_core<'py>(
                 inputs.r_obs,
                 inputs.v_obs,
                 &cfg,
+                &rho_nodes,
+                &d_rho,
                 G,
                 diagnostics,
             )
@@ -477,7 +484,7 @@ fn classify_core<'py>(
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
-    model, variants, weights, R_obs, V_obs, rho_min, rho_max, n_rho, n_rhodot,
+    model, variants, weights, R_obs, V_obs, rho_nodes, d_rho, n_rhodot,
     G, diagnostics=false, n_threads=None,
 ))]
 #[allow(non_snake_case)]
@@ -488,16 +495,20 @@ fn classify_batch<'py>(
     weights: PyReadonlyArray2<f64>,
     R_obs: PyReadonlyArray2<f64>,
     V_obs: PyReadonlyArray2<f64>,
-    rho_min: f64,
-    rho_max: f64,
-    n_rho: i64,
+    rho_nodes: PyReadonlyArray1<f64>,
+    d_rho: PyReadonlyArray1<f64>,
     n_rhodot: i64,
     G: f64,
     diagnostics: bool,
     n_threads: Option<usize>,
 ) -> PyResult<Vec<Bound<'py, PyDict>>> {
-    let cfg = GridCfg::new(rho_min, rho_max, n_rho, n_rhodot)
+    let rho_nodes = rho_nodes.as_slice()?;
+    let d_rho = d_rho.as_slice()?;
+    let cfg = GridCfg::new(rho_nodes, d_rho, n_rhodot)
         .map_err(PyValueError::new_err)?;
+    // One copy for the whole batch, so the rayon workers can run GIL-free.
+    let rho_nodes = rho_nodes.to_vec();
+    let d_rho = d_rho.to_vec();
 
     let v = variants.as_array();
     let wts = weights.as_array();
@@ -555,6 +566,8 @@ fn classify_batch<'py>(
                         inp.r_obs,
                         inp.v_obs,
                         &cfg,
+                        &rho_nodes,
+                        &d_rho,
                         G,
                         diagnostics,
                     )
@@ -655,21 +668,6 @@ fn bin_index<'py>(
     Ok(out.to_pyarray(py))
 }
 
-/// The rho node placement and linear cell widths, for exactness tests against
-/// `ranging.build_grid`.
-#[pyfunction]
-fn rho_nodes<'py>(
-    py: Python<'py>,
-    rho_min: f64,
-    rho_max: f64,
-    n_rho: i64,
-) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>)> {
-    let cfg = GridCfg::new(rho_min, rho_max, n_rho, 1)
-        .map_err(PyValueError::new_err)?;
-    let (nodes, d_rho) = cfg.rho_nodes().map_err(PyMemoryError::new_err)?;
-    Ok((nodes.to_pyarray(py), d_rho.to_pyarray(py)))
-}
-
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The crate carries no version (publish = false); the package version is
@@ -685,6 +683,5 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(needs_exact_guard, m)?)?;
     m.add_function(wrap_pyfunction!(cond_inf_elements, m)?)?;
     m.add_function(wrap_pyfunction!(bin_index, m)?)?;
-    m.add_function(wrap_pyfunction!(rho_nodes, m)?)?;
     Ok(())
 }

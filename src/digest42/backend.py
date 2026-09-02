@@ -83,6 +83,7 @@ path instead of silently scoring the central attributable; see
 
 from __future__ import annotations
 
+import functools
 import os
 import warnings
 from typing import Any
@@ -92,6 +93,7 @@ import numpy as np
 __all__ = [
     "BACKENDS",
     "ModelNotSupported",
+    "rho_axis",
     "sigma_point_count",
     "core_available",
     "requested_backend",
@@ -608,6 +610,67 @@ _MAX_PER_AXIS = 100_000_000
 _MAX_TOTAL = 1_000_000_000
 
 
+@functools.lru_cache(maxsize=32)
+def rho_axis(
+    rho_min: float, rho_max: float, n_rho: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """The rho quadrature nodes and their LINEAR cell widths.
+
+    **This must stay identical to the rho half of**
+    :func:`digest42.ranging.build_grid`, and it is the *only* place the Rust
+    backend gets its rho axis from: the kernel no longer generates it.
+
+    Why the axis crosses the boundary instead of being regenerated in Rust.
+    ``np.geomspace(lo, hi, n)`` is ``10 ** linspace(log10 lo, log10 hi, n)``,
+    and ``pow`` is not one of the operations IEEE-754 requires to be correctly
+    rounded.  numpy dispatches its ``power`` loop on runtime CPU features
+    (SVML/AVX-512 kernels where available, scalar libm otherwise), so the
+    doubles it returns depend on the machine, the numpy build and the libm --
+    not just on the numpy version.  Measured on one host: equally legitimate
+    formulations of the same quantity (``exp(y ln 10)``, ``exp2(y log2 10)``)
+    differ from ``np.power(10, y)`` by up to **7 ulp on 881 of 1200 nodes**.
+
+    A Rust reimplementation therefore cannot be bit-identical to
+    ``np.geomspace`` on every machine, and the first version of this port,
+    which reproduced one host's rounding, was caught by CI on another CPU.
+    Handing the array over makes rho-grid parity exact **by construction**
+    everywhere, and removes the whole class of geomspace-reimplementation
+    drift.  Everything the kernel still derives itself -- the
+    admissible-interval quadratic, the cell edges, the rho_dot midpoints -- uses
+    only ``+ - * /`` and ``sqrt``, which IEEE-754 *does* pin down, so those stay
+    bit-exact portably.
+
+    Cached because a `classify` loop asks for the same axis every call; the
+    arrays are returned read-only so a caller cannot corrupt the cache.
+    """
+    rho_min = float(rho_min)
+    rho_max = float(rho_max)
+    n_rho = int(n_rho)
+    # Same validation, same messages, as ranging.build_grid.
+    if not (rho_min > 0.0):
+        raise ValueError("rho_min must be > 0 (log-spaced rho grid)")
+    if not (rho_max > rho_min):
+        raise ValueError("rho_max must be > rho_min")
+    if n_rho < 1:
+        raise ValueError("n_rho and n_rhodot must be >= 1")
+
+    if n_rho == 1:
+        nodes = np.array([np.sqrt(rho_min * rho_max)])
+        d_rho = np.array([rho_max - rho_min])
+    else:
+        nodes = np.geomspace(rho_min, rho_max, n_rho)
+        edges = np.empty(n_rho + 1, dtype=float)
+        edges[0] = rho_min
+        edges[-1] = rho_max
+        edges[1:-1] = np.sqrt(nodes[:-1] * nodes[1:])
+        d_rho = np.diff(edges)
+    nodes = np.ascontiguousarray(nodes, dtype=float)
+    d_rho = np.ascontiguousarray(d_rho, dtype=float)
+    nodes.flags.writeable = False
+    d_rho.flags.writeable = False
+    return nodes, d_rho
+
+
 def _grid_counts(n_rho, n_rhodot) -> tuple[int, int]:
     """Validate and narrow the node counts before crossing into Rust."""
     n_rho = int(n_rho)
@@ -832,6 +895,7 @@ def classify_rust(
     check_component_pair(neo, other)
     core = _load_core()
     n_rho, n_rhodot = _grid_counts(n_rho, n_rhodot)
+    nodes, d_rho = rho_axis(rho_min, rho_max, n_rho)
     cm = core_model_for(neo, other)
     variants, weights = _variants_of(att)
     out = core.classify_core(
@@ -840,9 +904,8 @@ def classify_rust(
         weights,
         np.ascontiguousarray(R_obs, dtype=float),
         np.ascontiguousarray(V_obs, dtype=float),
-        float(rho_min),
-        float(rho_max),
-        int(n_rho),
+        nodes,
+        d_rho,
         int(n_rhodot),
         float(G),
         bool(diagnostics),
@@ -892,15 +955,15 @@ def classify_many_rust(
     weights = np.ascontiguousarray(
         np.stack([w for _, w in per], axis=0), dtype=float
     )
+    nodes, d_rho = rho_axis(rho_min, rho_max, n_rho)
     outs = core.classify_batch(
         cm,
         variants,
         weights,
         np.ascontiguousarray(R_obs, dtype=float).reshape(T, 3),
         np.ascontiguousarray(V_obs, dtype=float).reshape(T, 3),
-        float(rho_min),
-        float(rho_max),
-        int(n_rho),
+        nodes,
+        d_rho,
         int(n_rhodot),
         float(G),
         bool(diagnostics),

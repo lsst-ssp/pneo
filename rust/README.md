@@ -47,7 +47,7 @@ Dependencies are exactly the three the design allows: `pyo3`, `numpy`
 | --- | --- |
 | `src/consts.rs` | copies of `digest42.constants` / `transforms` constants (`K_GAUSS`, obliquity, H,G coefficients, `_COND_MAX`) |
 | `src/model.rs` | `Histogram`: the flattened `(q, e, i, H)` density table and the bin lookup, bit-identical to `population._bin_index` / `Digest2Histogram.density` including the D-14 clamp |
-| `src/kernel.rs` | the fused node loop: grid → geometry → elements → photometry → density → Jacobian → accumulation; grid-size validation |
+| `src/kernel.rs` | the fused node loop: geometry → elements → photometry → density → Jacobian → accumulation; ρ̇ node generation; grid validation |
 | `src/guard.rs` | exact port of WP2's conditioning guard, plus the reachable-manifold prefilter that decides when to run it |
 | `src/lib.rs` | PyO3 surface: `CoreModel`, `classify_core`, `classify_batch`, and the test hooks |
 
@@ -173,6 +173,31 @@ treated as hostile:
   numpy expression it replaces (marked `parity:` in the source), so the two
   backends differ only by libm rounding. The ranging grid comes out
   **bit-identical** to `ranging.build_grid`'s, node for node.
+* **The ρ axis is passed in, not regenerated.** `np.geomspace` is
+  `10 ** linspace(...)`, and `pow` is *not* an IEEE-754 correctly-rounded
+  operation: numpy dispatches its `power` loop on runtime CPU features
+  (SVML/AVX-512 kernels where available, scalar libm otherwise), so the doubles
+  depend on the machine, the numpy build and the libm — not just the numpy
+  version. Measured on one host: equally legitimate formulations of the same
+  quantity (`exp(y ln 10)`, `exp2(y log2 10)`) differ from `np.power(10, y)` by
+  up to **7 ulp on 881 of 1200 nodes**. So `digest42.backend.rho_axis` computes
+  the 1200-element axis with the same `np.geomspace` call `build_grid` makes and
+  hands the two small arrays (18.8 kB) over; ρ-grid parity is then exact **by
+  construction** on every platform. Cost: 0.24 µs/call cached (106 µs
+  uncached), i.e. inside the benchmark's noise. Everything the kernel still
+  derives itself — the admissible-interval quadratic, the geometric cell edges,
+  the ρ̇ midpoints — uses only `+ - * /` and `sqrt`, which IEEE-754 *does* pin
+  down, so those stay bit-exact portably.
+
+  > The first version of this port reimplemented `np.geomspace` in Rust and
+  > asserted bit-equality. That passed on the development host (where numpy's
+  > `power`, glibc's `pow` and Rust's `powf` are all the same libm call) and
+  > failed on CI's different CPU — the first CI run the parity suite ever got
+  > to. The full-grid test at `n_rho = 180` passed there by luck, not safety:
+  > the exposure is probabilistic in the number of exponents sampled. Both
+  > resolutions are now covered, plus a regression test that swaps in a
+  > deliberately differently-rounding `geomspace` and re-checks the whole parity
+  > contract.
 * Quantities that depend on ρ alone — the heliocentric position, |r|, the phase
   angle and `H(V, ρ)` — are hoisted out of the ρ̇ loop. That is an exact hoist
   and it removes seven of the ten transcendental calls per node (a 2× speedup).

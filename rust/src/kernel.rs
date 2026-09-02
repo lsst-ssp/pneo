@@ -152,44 +152,67 @@ fn hg_phase_integral(alpha: f64, g: f64) -> f64 {
     (1.0 - g) * p1 + g * p2
 }
 
-/// Grid configuration, mirroring `ranging.build_grid`'s arguments.
+/// Quadrature configuration.
+///
+/// The rho axis is **not** generated here: it is computed by
+/// `digest42.backend.rho_axis` with `np.geomspace` — the same call
+/// `ranging.build_grid` makes — and handed in.  That is deliberate, and it is a
+/// correctness requirement rather than a convenience:
+///
+/// `np.geomspace` is `10 ** linspace(log10 lo, log10 hi, n)`, and `pow` is not
+/// an IEEE-754 correctly-rounded operation.  numpy dispatches its `power` loop
+/// on runtime CPU features (SVML/AVX-512 kernels where available, scalar libm
+/// otherwise), so the doubles it returns depend on the machine, the numpy build
+/// and the libm — not just on the numpy version.  Measured: equally legitimate
+/// formulations of the same quantity (`exp(y ln 10)`, `exp2(y log2 10)`) differ
+/// from `np.power(10, y)` by up to 7 ulp on 881 of 1200 nodes.  An in-kernel
+/// reimplementation therefore cannot be bit-identical to `np.geomspace`
+/// everywhere, and an earlier version of this file that tried was caught by CI
+/// on a different CPU.
+///
+/// Consuming the same array makes rho-grid parity exact by construction on
+/// every numpy version and every machine.  Everything the kernel still derives
+/// itself — the admissible-interval quadratic, the cell edges, the rho_dot
+/// midpoints — uses only `+ - * /` and `sqrt`, which IEEE-754 *does* pin down,
+/// so those stay bit-exact portably.
 #[derive(Clone, Copy, Debug)]
 pub struct GridCfg {
-    pub rho_min: f64,
-    pub rho_max: f64,
-    pub n_rho: usize,
     pub n_rhodot: usize,
 }
 
 /// Largest grid the kernel will accept, per axis and in total.
 ///
 /// These are not accuracy limits — the production grid is (1200, 50), six
-/// orders of magnitude below the cap.  They exist because the node count
-/// reaches Rust as a Python integer, and without them
-/// `n_rho = n_rhodot = 2^32` wraps the product to zero (a ~4e9-iteration loop
-/// with the GIL released, i.e. an uninterruptible hang) while
-/// `n_rho = 1e14` aborts the process in the allocator instead of raising.
+/// orders of magnitude below the cap.  `n_rho` is now the length of a numpy
+/// array, so an absurd value fails in numpy before it ever reaches here; the
+/// caps still matter for `n_rhodot`, which arrives as a bare integer, and for
+/// the **product**, because `n_rho * n_rhodot` is the node count and
+/// `n_rho = n_rhodot = 2^32` used to wrap it to zero — a ~4e9-iteration loop
+/// with the GIL released, i.e. an uninterruptible hang.  `digest42.backend`
+/// mirrors both caps so the error is a `ValueError` rather than PyO3's
+/// `OverflowError` for counts too large for an `i64`.
 pub const MAX_NODES_PER_AXIS: i64 = 100_000_000;
 pub const MAX_NODES_TOTAL: i64 = 1_000_000_000;
 
 impl GridCfg {
-    /// Build a validated config from the raw (possibly hostile) Python values.
+    /// Validate the supplied rho axis and the rho_dot count.
     ///
-    /// `n_rho`/`n_rhodot` arrive signed so that a negative count raises
-    /// `ValueError` with the same message the Python reference gives, rather
-    /// than `OverflowError` from the unsigned conversion.
+    /// `n_rhodot` arrives signed so that a negative count raises `ValueError`
+    /// with the same message the Python reference gives, rather than
+    /// `OverflowError` from the unsigned conversion.
     pub fn new(
-        rho_min: f64,
-        rho_max: f64,
-        n_rho: i64,
+        rho_nodes: &[f64],
+        d_rho: &[f64],
         n_rhodot: i64,
     ) -> Result<GridCfg, String> {
-        if !(rho_min > 0.0) {
-            return Err("rho_min must be > 0 (log-spaced rho grid)".into());
+        if rho_nodes.len() != d_rho.len() {
+            return Err(format!(
+                "rho_nodes has {} entries but d_rho has {}",
+                rho_nodes.len(),
+                d_rho.len()
+            ));
         }
-        if !(rho_max > rho_min) {
-            return Err("rho_max must be > rho_min".into());
-        }
+        let n_rho = rho_nodes.len() as i64;
         if n_rho < 1 || n_rhodot < 1 {
             return Err("n_rho and n_rhodot must be >= 1".into());
         }
@@ -208,60 +231,15 @@ impl GridCfg {
                 ))
             }
         }
+        if !rho_nodes.iter().all(|v| v.is_finite() && *v > 0.0) {
+            return Err("rho_nodes must be finite and > 0".into());
+        }
+        if !d_rho.iter().all(|v| v.is_finite()) {
+            return Err("d_rho must be finite".into());
+        }
         Ok(GridCfg {
-            rho_min,
-            rho_max,
-            n_rho: n_rho as usize,
             n_rhodot: n_rhodot as usize,
         })
-    }
-
-    /// `(rho_nodes, d_rho)` exactly as `ranging.build_grid` computes them:
-    /// `np.geomspace` node placement with cell edges at the *geometric*
-    /// midpoints, clamped to `[rho_min, rho_max]` at the ends, and widths taken
-    /// in LINEAR rho so the cells tile `[rho_min, rho_max]` exactly.
-    pub fn rho_nodes(&self) -> Result<(Vec<f64>, Vec<f64>), String> {
-        let n = self.n_rho;
-        if n == 1 {
-            return Ok((
-                vec![(self.rho_min * self.rho_max).sqrt()],
-                vec![self.rho_max - self.rho_min],
-            ));
-        }
-        // Fallible: MAX_NODES_PER_AXIS still allows an 800 MB request, and an
-        // allocation failure must raise, not abort.
-        let mut nodes: Vec<f64> = Vec::new();
-        nodes
-            .try_reserve_exact(n)
-            .map_err(|_| format!("cannot allocate {n} rho nodes"))?;
-        let mut edges: Vec<f64> = Vec::new();
-        edges
-            .try_reserve_exact(n + 1)
-            .map_err(|_| format!("cannot allocate {n} rho cell edges"))?;
-        // parity: np.geomspace == 10 ** linspace(log10 lo, log10 hi, n), with
-        // the two endpoints overwritten by the exact bounds.
-        let lo = self.rho_min.log10();
-        let hi = self.rho_max.log10();
-        let step = (hi - lo) / ((n - 1) as f64);
-        for i in 0..n {
-            nodes.push(10f64.powf((i as f64) * step + lo));
-        }
-        nodes[0] = self.rho_min;
-        nodes[n - 1] = self.rho_max;
-
-        edges.push(self.rho_min);
-        for k in 1..n {
-            edges.push((nodes[k - 1] * nodes[k]).sqrt());
-        }
-        edges.push(self.rho_max);
-        let mut d_rho: Vec<f64> = Vec::new();
-        d_rho
-            .try_reserve_exact(n)
-            .map_err(|_| format!("cannot allocate {n} rho cell widths"))?;
-        for k in 0..n {
-            d_rho.push(edges[k + 1] - edges[k]);
-        }
-        Ok((nodes, d_rho))
     }
 }
 
@@ -350,6 +328,7 @@ impl Diagnostics {
 /// `variants` / `weights` carry the sigma-point ensemble (v0 passes `K = 1`
 /// with weight `1.0`).  Each variant gets its own admissible region, its own
 /// grid and its own pass; `Lambda_C = sum_k w_k Lambda_C^(k)`.
+#[allow(clippy::too_many_arguments)]
 pub fn classify_one(
     model: &Model,
     variants: &[Variant],
@@ -357,10 +336,11 @@ pub fn classify_one(
     r_obs: [f64; 3],
     v_obs: [f64; 3],
     cfg: &GridCfg,
+    rho_nodes: &[f64],
+    d_rho: &[f64],
     g: f64,
     diagnostics: bool,
 ) -> Result<Outcome, String> {
-    let (rho_nodes, d_rho) = cfg.rho_nodes()?;
     let (ce, se) = obliquity_cos_sin();
     let mu32 = mu_32();
 
@@ -377,7 +357,7 @@ pub fn classify_one(
         .h_support_end()
         .max(model.other.h_support_end());
     let mut diag = if diagnostics {
-        Some(Diagnostics::with_capacity(cfg.n_rho * cfg.n_rhodot)?)
+        Some(Diagnostics::with_capacity(rho_nodes.len() * cfg.n_rhodot)?)
     } else {
         None
     };
@@ -571,40 +551,39 @@ pub fn classify_one(
 mod tests {
     use super::*;
 
+    fn axis(n: usize) -> (Vec<f64>, Vec<f64>) {
+        // Any positive, finite axis will do for the config tests.
+        let nodes: Vec<f64> = (0..n).map(|i| 0.01 + (i as f64) * 0.1).collect();
+        let d: Vec<f64> = vec![0.1; n];
+        (nodes, d)
+    }
+
     #[test]
     fn grid_config_rejects_hostile_sizes() {
-        assert!(GridCfg::new(0.01, 100.0, -5, 50).is_err());
-        assert!(GridCfg::new(0.01, 100.0, 0, 50).is_err());
-        assert!(GridCfg::new(0.01, 100.0, 1200, 0).is_err());
-        assert!(GridCfg::new(0.0, 100.0, 1200, 50).is_err());
-        assert!(GridCfg::new(0.01, 0.001, 1200, 50).is_err());
-        // per-axis cap
-        assert!(GridCfg::new(0.01, 100.0, 100_000_000_000_000, 1).is_err());
+        let (nodes, d) = axis(1200);
+        assert!(GridCfg::new(&nodes, &d, 50).is_ok());
+        assert!(GridCfg::new(&nodes, &d, -5).is_err());
+        assert!(GridCfg::new(&nodes, &d, 0).is_err());
+        // an empty axis
+        assert!(GridCfg::new(&[], &[], 50).is_err());
+        // mismatched axis lengths
+        assert!(GridCfg::new(&nodes, &d[..10], 50).is_err());
+        // per-axis cap on n_rhodot
+        assert!(GridCfg::new(&nodes, &d, 100_000_000_000_000).is_err());
         // product cap, including the case that used to wrap to zero
-        assert!(GridCfg::new(0.01, 100.0, 4_294_967_296, 4_294_967_296).is_err());
-        assert!(GridCfg::new(0.01, 100.0, 1_000_000, 10_000).is_err());
-        // and the production grid still passes
-        assert!(GridCfg::new(0.01, 100.0, 1200, 50).is_ok());
-    }
-
-    #[test]
-    fn geomspace_endpoints_and_tiling() {
-        let cfg = GridCfg::new(0.01, 100.0, 1200, 50).unwrap();
-        let (nodes, d_rho) = cfg.rho_nodes().unwrap();
-        assert_eq!(nodes.len(), 1200);
-        assert_eq!(nodes[0], 0.01);
-        assert_eq!(nodes[1199], 100.0);
-        let total: f64 = d_rho.iter().sum();
-        assert!((total - (100.0 - 0.01)).abs() < 1e-9);
-        assert!(nodes.windows(2).all(|w| w[1] > w[0]));
-    }
-
-    #[test]
-    fn single_rho_node_special_case() {
-        let cfg = GridCfg::new(0.01, 100.0, 1, 3).unwrap();
-        let (nodes, d_rho) = cfg.rho_nodes().unwrap();
-        assert_eq!(nodes, vec![(0.01f64 * 100.0).sqrt()]);
-        assert_eq!(d_rho, vec![100.0 - 0.01]);
+        assert!(GridCfg::new(&nodes, &d, 4_294_967_296).is_err());
+        assert!(GridCfg::new(&nodes, &d, 10_000_000).is_err());
+        // non-finite / non-positive nodes
+        let mut bad = nodes.clone();
+        bad[7] = f64::NAN;
+        assert!(GridCfg::new(&bad, &d, 50).is_err());
+        bad[7] = 0.0;
+        assert!(GridCfg::new(&bad, &d, 50).is_err());
+        bad[7] = -1.0;
+        assert!(GridCfg::new(&bad, &d, 50).is_err());
+        let mut bad_d = d.clone();
+        bad_d[3] = f64::INFINITY;
+        assert!(GridCfg::new(&nodes, &bad_d, 50).is_err());
     }
 
     #[test]

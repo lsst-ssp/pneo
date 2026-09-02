@@ -38,7 +38,7 @@ from astropy.time import Time
 
 from digest42 import transforms as T
 from digest42.attributable import Attributable
-from digest42.backend import core_available, resolve_backend
+from digest42.backend import core_available, resolve_backend, rho_axis
 from digest42.classifier import classify, classify_many
 from digest42.constants import G_SLOPE_DEFAULT, MU_SUN
 from digest42.population import (
@@ -258,41 +258,155 @@ def test_density_lookup_is_bit_exact(core, clamp):
         assert (want_neo[above] > 0.0).any()
 
 
-def test_rho_nodes_are_bit_exact(core):
-    """Rust node placement/cell widths equal `build_grid`'s, bit for bit."""
-    for rho_min, rho_max, n_rho in [
-        (0.01, 100.0, 1200),
-        (0.01, 100.0, 1),
-        (0.05, 5.0, 2),
-        (1e-3, 1e3, 137),
-        (0.5, 0.500001, 9),
+def test_rho_axis_matches_build_grid(d2pair):
+    """`backend.rho_axis` is bit-identical to the rho half of `build_grid`.
+
+    The kernel no longer generates the rho axis: `rho_axis` computes it with the
+    same `np.geomspace` call `ranging.build_grid` makes, and the array is handed
+    across the boundary.  This test is what keeps that duplicated ten lines
+    honest, and it checks against `build_grid`'s **actual output** rather than
+    against a restatement of its formula.
+
+    (It replaces a test that asserted the *Rust* node placement was bit-equal to
+    `np.geomspace`.  That contract is not portable: `geomspace` is
+    `10 ** linspace(...)`, `pow` is not IEEE-754 correctly rounded, and numpy
+    dispatches its `power` loop on runtime CPU features -- so the doubles depend
+    on the machine and the libm, not just on the numpy version.  CI on a
+    different CPU caught it.)
+    """
+    from digest42.backend import rho_axis
+
+    neo, other = d2pair
+    att, R, V = _gate_tracklets(1, seed=11)[0]
+    for rho_min, rho_max, n_rho, n_rhodot in [
+        (0.01, 100.0, 1200, 50),
+        (0.01, 100.0, 180, 12),
+        (0.01, 100.0, 1, 3),
+        (0.05, 5.0, 2, 7),
+        (1e-3, 1e3, 137, 5),
+        (0.5, 0.500001, 9, 4),
+        (0.01, 100.0, 2, 1),
     ]:
-        nodes, d_rho = core.rho_nodes(rho_min, rho_max, n_rho)
-        if n_rho == 1:
-            want_nodes = np.array([np.sqrt(rho_min * rho_max)])
-            want_d = np.array([rho_max - rho_min])
-        else:
-            want_nodes = np.geomspace(rho_min, rho_max, n_rho)
-            edges = np.empty(n_rho + 1)
-            edges[0] = rho_min
-            edges[-1] = rho_max
-            edges[1:-1] = np.sqrt(want_nodes[:-1] * want_nodes[1:])
-            want_d = np.diff(edges)
-        assert np.array_equal(nodes, want_nodes), (rho_min, rho_max, n_rho)
-        assert np.array_equal(d_rho, want_d), (rho_min, rho_max, n_rho)
+        nodes, d_rho = rho_axis(rho_min, rho_max, n_rho)
+        assert nodes.shape == d_rho.shape == (n_rho,)
+        # The cells tile [rho_min, rho_max] exactly -- build_grid's documented
+        # invariant, and the one property that must hold on every platform.
+        assert d_rho.sum() == rho_max - rho_min
+        assert np.all(nodes > 0.0) and np.all(np.isfinite(nodes))
+        if n_rho > 1:
+            assert np.all(np.diff(nodes) > 0.0)
+            assert nodes[0] == rho_min and nodes[-1] == rho_max
+
+        # ... and it agrees with build_grid node for node, bit for bit.
+        grid = build_grid(att, R, V, rho_min, rho_max, n_rho, n_rhodot)
+        lo, hi = admissible_rhodot_interval(att, R, V, nodes)
+        width = hi - lo
+        valid = np.isfinite(width) & (width > 0.0)
+        assert np.array_equal(grid.rho, np.repeat(nodes[valid], n_rhodot))
+        assert np.array_equal(
+            grid.weight,
+            np.repeat(d_rho[valid] * (width[valid] / n_rhodot), n_rhodot),
+        )
+
+    # The cache hands back the same read-only arrays, so no caller can corrupt
+    # the axis another tracklet will use.
+    a1, w1 = rho_axis(0.01, 100.0, 180)
+    a2, w2 = rho_axis(0.01, 100.0, 180)
+    assert a1 is a2 and w1 is w2
+    assert not a1.flags.writeable and not w1.flags.writeable
+    with pytest.raises(ValueError):
+        a1[0] = 1.0
+    # Same validation, same messages, as build_grid.
+    for bad in [(0.0, 100.0, 10), (-1.0, 100.0, 10), (1.0, 0.5, 10),
+                (0.01, 100.0, 0), (0.01, 100.0, -3)]:
+        with pytest.raises(ValueError):
+            rho_axis(*bad)
 
 
-def test_grid_is_reproduced_bit_exactly(d2pair, core):
-    """The kernel's internal grid == `build_grid`'s, node for node.
+def test_parity_survives_a_differently_rounding_geomspace(d2pair, monkeypatch):
+    """The regression test for the CI failure this design fixes.
 
-    Covers the admissible-interval quadratic (including its NaN/empty
-    convention) and the midpoint rho_dot placement.
+    Simulates a numpy whose `geomspace` lands on different doubles, by swapping
+    in an equally legitimate formulation of `10 ** y` (`exp(y ln 10)`, measured
+    to differ from `np.power(10, y)` by up to 7 ulp on 881 of 1200 nodes).  That
+    is a faithful stand-in for what CI hit: `pow` is not IEEE-754 correctly
+    rounded, and numpy dispatches its `power` loop on runtime CPU features, so a
+    different machine legitimately produces a different axis.
+
+    Under the old design (kernel regenerates the axis) this diverges.  Under the
+    current one both sides consume the same array, so the grid stays bit-exact
+    and the parity bars hold -- on any numpy, any CPU, any libm.
+    """
+    from digest42 import ranging
+    from digest42.backend import rho_axis
+
+    real_geomspace = np.geomspace
+
+    def hostile_geomspace(lo, hi, num, **kw):
+        y = np.linspace(np.log10(lo), np.log10(hi), num)
+        r = np.exp(y * np.log(10.0))
+        if num > 0:
+            r[0] = lo
+            if num > 1:
+                r[-1] = hi
+        return r
+
+    # Sanity: the stand-in really does move the nodes.
+    a = real_geomspace(0.01, 100.0, 1200)
+    b = hostile_geomspace(0.01, 100.0, 1200)
+    n_moved = int((a != b).sum())
+    max_ulp = int(np.abs(a.view(np.int64) - b.view(np.int64))[a != b].max())
+    assert n_moved > 500 and max_ulp >= 2, (n_moved, max_ulp)
+
+    neo, other = d2pair
+    monkeypatch.setattr(np, "geomspace", hostile_geomspace)
+    monkeypatch.setattr(ranging.np, "geomspace", hostile_geomspace)
+    rho_axis.cache_clear()
+    try:
+        for cfg in (FAST, PROD):
+            for att, R, V in _gate_tracklets(3, seed=606):
+                want = build_grid(att, R, V, 0.01, 100.0, **cfg)
+                rr = classify(att, neo, other, R, V, backend="rust",
+                              diagnostics=True, **cfg)
+                rp = classify(att, neo, other, R, V, backend="python", **cfg)
+                # The moved axis is still shared, so the grid is still exact ...
+                assert np.array_equal(rr.grid.rho, want.rho)
+                assert np.array_equal(rr.grid.rho_dot, want.rho_dot)
+                assert np.array_equal(rr.grid.weight, want.weight)
+                # ... and so is the whole parity contract.
+                _compare(rp, rr, f"hostile-geomspace {cfg}")
+    finally:
+        rho_axis.cache_clear()
+    assert np.geomspace is hostile_geomspace  # monkeypatch still in force
+    # And the axis genuinely moved for the run above, i.e. this was not vacuous.
+    nodes, _ = rho_axis(0.01, 100.0, 1200)
+    rho_axis.cache_clear()
+    assert not np.array_equal(nodes, real_geomspace(0.01, 100.0, 1200))
+
+
+@pytest.mark.parametrize("cfg", [FAST, PROD], ids=["fast", "production"])
+def test_grid_is_reproduced_bit_exactly(d2pair, cfg):
+    """The kernel's grid == `build_grid`'s, node for node.
+
+    The rho axis is exact by construction (both sides consume the array
+    `backend.rho_axis` produced).  What this still tests is everything the
+    kernel derives itself: the admissible-interval quadratic including its
+    NaN/empty convention, the geometric cell edges, and the midpoint rho_dot
+    placement -- all of which use only the IEEE-754-exact operations
+    (`+ - * /`, `sqrt`), so they are bit-exact portably.
+
+    Parametrized over BOTH resolutions on purpose.  The predecessor of this test
+    ran at n_rho = 180 only, and the geomspace portability bug that CI caught
+    showed up at n_rho = 1200 -- 180 passing was luck (fewer exponents sampled,
+    so a smaller chance of hitting one where numpy's `pow` and the kernel's
+    disagreed), not safety.
     """
     neo, other = d2pair
-    for att, R, V in _gate_tracklets(25, seed=5):
-        want = build_grid(att, R, V, 0.01, 100.0, **FAST)
+    n = 25 if cfg is FAST else 4
+    for att, R, V in _gate_tracklets(n, seed=5):
+        want = build_grid(att, R, V, 0.01, 100.0, **cfg)
         got = classify(
-            att, neo, other, R, V, backend="rust", diagnostics=True, **FAST
+            att, neo, other, R, V, backend="rust", diagnostics=True, **cfg
         )
         assert np.array_equal(got.grid.rho, want.rho)
         assert np.array_equal(got.grid.rho_dot, want.rho_dot)
@@ -307,7 +421,9 @@ def test_admissible_interval_convention_on_empty_rows(d2pair, core):
     V = np.array([0.0155, 0.0062, 0.0027])
     att = Attributable(ra=1.0, dec=0.2, ra_rate=0.6, dec_rate=0.2,
                        epoch=epoch, v_mag=20.0)
-    rho_nodes, _ = core.rho_nodes(0.01, 100.0, FAST["n_rho"])
+    from digest42.backend import rho_axis
+
+    rho_nodes, _ = rho_axis(0.01, 100.0, FAST["n_rho"])
     lo, hi = admissible_rhodot_interval(att, R, V, rho_nodes)
     width = hi - lo
     n_valid = int(np.count_nonzero(np.isfinite(width) & (width > 0.0)))
@@ -724,7 +840,8 @@ def test_sigma_points_are_a_weighted_average(d2pair, core):
     out = core.classify_core(
         cm, variants, weights,
         np.ascontiguousarray(R), np.ascontiguousarray(V),
-        0.01, 100.0, FAST["n_rho"], FAST["n_rhodot"], G_SLOPE_DEFAULT, False,
+        *rho_axis(0.01, 100.0, FAST["n_rho"]), FAST["n_rhodot"],
+        G_SLOPE_DEFAULT, False,
     )
 
     singles = []
@@ -781,7 +898,8 @@ def test_k1_with_unit_weight_is_the_plain_path(d2pair, core):
     v = np.array([[att.ra, att.dec, att.ra_rate, att.dec_rate, att.v_mag]])
     out = core.classify_core(
         cm, v, np.ones(1), np.ascontiguousarray(R), np.ascontiguousarray(V),
-        0.01, 100.0, FAST["n_rho"], FAST["n_rhodot"], G_SLOPE_DEFAULT, False,
+        *rho_axis(0.01, 100.0, FAST["n_rho"]), FAST["n_rhodot"],
+        G_SLOPE_DEFAULT, False,
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -803,7 +921,8 @@ def test_sigma_points_reject_diagnostics(d2pair, core):
     with pytest.raises(ValueError, match="single attributable variant"):
         core.classify_core(
             cm, v, np.ones(2), np.ascontiguousarray(R),
-            np.ascontiguousarray(V), 0.01, 100.0, 10, 4, G_SLOPE_DEFAULT, True,
+            np.ascontiguousarray(V), *rho_axis(0.01, 100.0, 10), 4,
+            G_SLOPE_DEFAULT, True,
         )
 
 
@@ -1051,24 +1170,37 @@ def test_hostile_grid_sizes_raise_cleanly(d2pair, core):
     att, R, V = _gate_tracklets(1, seed=3001)[0]
     v = np.array([[att.ra, att.dec, att.ra_rate, att.dec_rate, att.v_mag]])
 
-    def run(n_rho, n_rhodot, rho_min=0.01, rho_max=100.0):
+    def run(n_rho, n_rhodot, nodes=None, d_rho=None):
+        if nodes is None:
+            nodes = np.geomspace(0.01, 100.0, max(n_rho, 1))
+            d_rho = np.full(max(n_rho, 1), 0.1)
         return core.classify_core(
             cm, v, np.ones(1), np.ascontiguousarray(R),
-            np.ascontiguousarray(V), rho_min, rho_max, n_rho, n_rhodot,
-            G_SLOPE_DEFAULT, False,
+            np.ascontiguousarray(V), np.ascontiguousarray(nodes),
+            np.ascontiguousarray(d_rho), n_rhodot, G_SLOPE_DEFAULT, False,
         )
 
-    for n_rho, n_rhodot in [
-        (-5, 50), (0, 50), (1200, 0), (1200, -1),
-        (10 ** 14, 4), (2 ** 32, 2 ** 32), (10 ** 9, 10 ** 3),
-        (2 ** 40, 1),
-    ]:
+    for n_rhodot in (0, -1, 10 ** 14, 2 ** 32, 2 ** 40):
         with pytest.raises(ValueError):
-            run(n_rho, n_rhodot)
+            run(1200, n_rhodot)
+    # an empty axis, and mismatched axis lengths
     with pytest.raises(ValueError):
-        run(10, 4, rho_min=0.0)
+        run(0, 50, nodes=np.zeros(0), d_rho=np.zeros(0))
     with pytest.raises(ValueError):
-        run(10, 4, rho_min=1.0, rho_max=0.5)
+        run(0, 50, nodes=np.geomspace(0.01, 1.0, 10), d_rho=np.full(3, 0.1))
+    # non-finite / non-positive nodes
+    for bad in (np.nan, np.inf, 0.0, -1.0):
+        nodes = np.geomspace(0.01, 100.0, 20).copy()
+        nodes[7] = bad
+        with pytest.raises(ValueError):
+            run(20, 5, nodes=nodes, d_rho=np.full(20, 0.1))
+    with pytest.raises(ValueError):
+        run(20, 5, nodes=np.geomspace(0.01, 100.0, 20),
+            d_rho=np.full(20, np.nan))
+    # the product cap still bites through the paired axis
+    with pytest.raises(ValueError):
+        run(10 ** 6, 10 ** 4, nodes=np.geomspace(0.01, 100.0, 10 ** 6),
+            d_rho=np.full(10 ** 6, 0.1))
     # The same sizes go through classify() with the same exception type as the
     # Python reference gives -- including counts too large for an i64, which
     # would otherwise surface as PyO3's OverflowError.
@@ -1828,7 +1960,7 @@ def test_mixed_mode_artifact_is_real_and_the_guard_is_what_stops_it(
                 np.ones(1),
                 np.ascontiguousarray(R, dtype=float),
                 np.ascontiguousarray(V, dtype=float),
-                0.01, 100.0, FAST["n_rho"], FAST["n_rhodot"],
+                *rho_axis(0.01, 100.0, FAST["n_rho"]), FAST["n_rhodot"],
                 G_SLOPE_DEFAULT, False,
             )
             ln, lo = float(out["lambda_neo"]), float(out["lambda_other"])
