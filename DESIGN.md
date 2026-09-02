@@ -290,8 +290,9 @@ $(A, V)$-conditional calibration, so these sets can be made survey-like without 
 simulator.
 
 **Unbound-draw filtering.** The digest2 model's top eccentricity bin straddles $e = 1$,
-so `sample()` yields formally unbound objects — measured at 1.93% of All/NEO draws
-(2.24% Unk/NEO) versus ~2×10⁻⁶ of "other" (WP4 review). The generator must discard
+so `sample()` yields formally unbound objects — 1.92% of All/NEO draws expected exactly
+from the bin counts (2.23% Unk/NEO; MC-measured at 1.93%/2.24% in the WP4 review) versus
+~2×10⁻⁶ of "other". The generator must discard
 unbound draws and report the discarded fraction per component. Calibration is preserved:
 the classifier's admissible region restricts the likelihood integral to bound orbits
 identically, so both the generating distribution and the effective prior are the

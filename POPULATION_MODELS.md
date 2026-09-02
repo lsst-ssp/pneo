@@ -349,9 +349,10 @@ From the abstract — the **"Synthetic Main Belt" (SMB)** model:
 of small-body populations. Closest items: RSBPM's internal Gaussian KDEs (§2.5); NEOMOD's
 grid+simulator form; and ML *classifiers* consuming population-model outputs — direct
 precedents/competitors for digest42:
-- Cloete, Vereš & Loeb 2025, A&A ([arXiv:2505.11910](https://arxiv.org/abs/2505.11910)):
+- Vereš, Cloete, Payne & Loeb 2025, A&A 698, A242 ([arXiv:2505.11910](https://arxiv.org/abs/2505.11910)):
   GBM/RF on 30 digest2 parameter categories for NEOCP candidates 2019–2024.
-- Cloete, Vereš & Loeb ([arXiv:2412.02112](https://arxiv.org/pdf/2412.02112)): tracklet-level
+  *(author order corrected 2026-09-02 against ADS, 2025A&A...698A.242V)*
+- Cloete, Vereš & Loeb 2024, A&A 691, A338 ([arXiv:2412.02112](https://arxiv.org/pdf/2412.02112)): tracklet-level
   ISO classification for LSST, trained on DP0.3; digest2 scores dominate feature importance.
 
 ## 12. Recommended composition for digest42
