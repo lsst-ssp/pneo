@@ -207,3 +207,32 @@ validation/DIGEST2_COMPARISON_CLAMPED.md.
 **Alternatives.** Leaving D-4 truncation as the only mode (keeps the confound
 unmeasured); two-sided emulation including negative-H (rejected: changes nothing
 measurable while doubling the deviation from D-4).
+
+## D-15: Rust core kernel behind a backend switch (2026-09-02)
+
+**Decision.** The classify hot path is implemented twice: the original Python/numpy
+implementation remains the *reference backend* (unchanged, authoritative for semantics
+except at |dec| = 90° exactly — see DESIGN §2.3), and a Rust crate (rust/, PyO3, module
+`digest42._core`) provides the production backend — one fused per-node kernel, Jacobian
+via the exact Delaunay closed form (no per-node 6×6 or Kepler solve; the Python cond
+guard is ported exactly behind a reachability-premised prefilter with a measured 119×
+margin), process-lifetime CoreModel with content-fingerprinted caching, sigma-point-ready
+(K variants per call; non-Rust backends raise rather than silently ignore),
+diagnostics-off zero-allocation mode, rayon batching with bit-reproducible results
+independent of thread count. Selection: `backend="auto"|"python"|"rust"` (auto = Rust if
+importable and the density pair is core-compatible, else silent fallback);
+DIGEST42_BACKEND env overrides only with `python`/`rust`.
+
+**Rationale.** Performance goal (DESIGN §1, issue #1): measured 12.0 ms/tracklet
+single-core at (1200,50) vs 482 ms Python (40×), 0.40 ms/tracklet batched at 96 threads;
+the 20k gate catalogue scores in ~5 s. Acceptance evidence: golden A/B on gate_v0 —
+max |Δp| = 7.7e-13, Λ rel ≤ 1.7e-9, masking decisions identical on 8.0e8 nodes; WP6 gate
+re-run on the Rust backend passes with statistics identical to the run of record;
+adversarial review found the arithmetic core clean and four shell defects, all fixed
+(overflow-unsound unsafe, grid-size crash paths, stale model cache, sigma-point
+asymmetry).
+
+**Alternatives.** Numba spike (skipped — Rust chosen directly for the production-service
+framing); JAX/GPU (still open for v1 covariance-marginalization scale); maturin wheel
+packaging (deferred: needs pyproject build-backend migration; current build is
+rust/build.sh + atomic .so install into the editable tree).

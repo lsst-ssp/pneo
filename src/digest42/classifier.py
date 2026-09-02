@@ -134,6 +134,12 @@ class ClassificationResult:
         were therefore zeroed.  Reported separately because such a node is
         indistinguishable, in ``node_density_*``, from one where the density
         is genuinely zero.
+    diagnostics : bool
+        Whether the per-node arrays above were materialized.  ``False`` (from
+        ``classify(diagnostics=False)``) means they are empty *by request*,
+        which is a different thing from an empty admissible region — so
+        :meth:`measure_fraction_H_above` and :meth:`posterior_mass_where`
+        raise instead of returning a meaningless ``0.0``.
     """
 
     p_neo: float
@@ -148,6 +154,19 @@ class ClassificationResult:
     n_nodes: int = 0
     n_masked_nonfinite: int = 0
     n_masked_det: int = 0
+    #: Whether the per-node arrays were kept (``classify(diagnostics=...)``).
+    #: When False the node arrays are empty *by request*, which is a different
+    #: thing from an empty admissible region, and the §2.6 helpers below refuse
+    #: to answer rather than return a meaningless 0.0.
+    diagnostics: bool = True
+
+    def _require_diagnostics(self, what: str) -> None:
+        if not self.diagnostics:
+            raise ValueError(
+                f"{what} needs the per-node arrays, but this tracklet was "
+                "classified with diagnostics=False, so they were never "
+                "materialized. Re-run classify(..., diagnostics=True)."
+            )
 
     # -- DESIGN §2.6 diagnostics ------------------------------------------
 
@@ -161,7 +180,12 @@ class ClassificationResult:
         is a property of the *geometry*, not of the posterior: it says how much
         of the integration domain a truncation removes.  Nodes with NaN H count
         as not exceeding ``h``.  Returns 0.0 for an empty region.
+
+        Raises ValueError if the tracklet was classified with
+        ``diagnostics=False``: the node arrays were never materialized, and 0.0
+        would be indistinguishable from a real answer.
         """
+        self._require_diagnostics("measure_fraction_H_above")
         w = np.asarray(self.grid.weight, dtype=float)
         total = float(w.sum())
         if not (total > 0.0):
@@ -191,12 +215,19 @@ class ClassificationResult:
         -------
         float — 0.0 when the region is empty or the component's Lambda is 0
         (and ``normalize`` is True).
+
+        Raises
+        ------
+        ValueError
+            If the tracklet was classified with ``diagnostics=False`` (the node
+            arrays were never materialized), or if ``mask`` has the wrong shape.
         """
         comp = str(component).lower()
         if comp not in ("neo", "other", "both"):
             raise ValueError(
                 f"component must be 'neo', 'other' or 'both', got {component!r}"
             )
+        self._require_diagnostics("posterior_mass_where")
         node = self._node_map(comp)
         w = np.asarray(self.grid.weight, dtype=float)
         if node.size == 0:
@@ -416,6 +447,42 @@ def _posterior(lam_neo: float, lam_other: float) -> tuple[float, float, str]:
     return float(lam_neo / total), float(np.log(lam_neo) - np.log(lam_other)), "ok"
 
 
+def _warn_status(status: str, lam_neo: float, lam_other: float,
+                 stacklevel: int = 3) -> None:
+    """Emit the RuntimeWarning that goes with a `_posterior` status.
+
+    Factored out of `classify` so that the Rust backend raises *exactly* the
+    same warnings (same text, same category) as the reference path.
+    """
+    if status == "both_zero":
+        warnings.warn(
+            "digest42.classify: both marginal likelihoods are zero "
+            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); the "
+            "tracklet has no support in either population model (support "
+            "truncation, DESIGN §2.6). P(NEO) is undefined.",
+            RuntimeWarning,
+            stacklevel=stacklevel,
+        )
+    elif status == "overflow":
+        warnings.warn(
+            "digest42.classify: both marginal likelihoods overflowed to "
+            "infinity; their ratio is indeterminate and P(NEO) = 0.5 is "
+            "returned as the symmetric limit. Rescale the population "
+            "components.",
+            RuntimeWarning,
+            stacklevel=stacklevel,
+        )
+    elif status == "nan":  # pragma: no cover - integrand is sanitized per node
+        warnings.warn(
+            "digest42.classify: a marginal likelihood is NaN "
+            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); "
+            "this indicates a bug in a PopulationDensity implementation. "
+            "P(NEO) is undefined.",
+            RuntimeWarning,
+            stacklevel=stacklevel,
+        )
+
+
 def classify(
     att: Attributable,
     neo: PopulationDensity,
@@ -431,6 +498,8 @@ def classify(
     lon_deg: float | None = None,
     lat_deg: float | None = None,
     height_m: float = 0.0,
+    backend: str = "auto",
+    diagnostics: bool = True,
 ) -> ClassificationResult:
     """Classify one tracklet (DESIGN §2.3–2.5).
 
@@ -476,7 +545,64 @@ def classify(
         :func:`digest42.attributable.observer_state` when the observer state
         is not supplied directly.  Ignored when both ``R_obs`` and ``V_obs``
         are given.
+    backend : {"auto", "python", "rust"}
+        Which implementation of the node loop to use.  ``"python"`` is the
+        reference pipeline in this module; ``"rust"`` is the fused kernel in
+        the ``digest42._core`` extension (see :mod:`digest42.backend`), which
+        evaluates the composed Jacobian in closed form instead of building and
+        inverting the 6x6 chain.  ``"auto"`` (the default) picks ``"rust"``
+        when the extension is importable and falls back to ``"python"``
+        otherwise; ``DIGEST42_BACKEND`` overrides the argument.  Both backends
+        return the same ``ClassificationResult`` contract.
+    diagnostics : bool
+        Whether to populate the per-node diagnostics (``grid``,
+        ``node_density_*``, ``node_H``, ``node_q``).  True by default, which is
+        the historical behaviour.  With ``False`` those arrays come back empty
+        in *both* backends (and the Rust kernel then performs no per-node
+        allocation at all); only the scalars and the mask counters are filled.
+        The result records the choice in ``ClassificationResult.diagnostics``,
+        and the §2.6 node helpers raise rather than answer from empty arrays.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``att`` carries ``sigma_points`` (more than one attributable
+        variant) and the resolved backend is ``"python"``.  Marginalizing over
+        the attributable distribution is a v1 capability that only the fused
+        kernel implements [D-6]; refusing here is deliberate, so that the same
+        call cannot silently score just the central attributable on one backend
+        and the full ensemble on the other.
+
+    Notes
+    -----
+    Backend differences.  The two paths are held to |dp_neo| <= 1e-6 and 1e-5
+    relative on each Lambda by ``tests/test_backend_parity.py``, and both mask
+    counters agree exactly: the Rust kernel reproduces WP2's conditioning guard
+    itself rather than approximating it (``rust/src/guard.rs``).  Measured on
+    the stored gate_v0 catalogue (``validation/backend_parity.py``): max
+    |dp_neo| ~ 2e-16, max Lambda relative error ~4e-13, identical
+    ``n_masked_nonfinite`` and ``n_masked_det`` node counts.
     """
+    from .backend import ModelNotSupported, resolve_backend, sigma_point_count
+
+    _which = resolve_backend(backend)
+
+    # Sigma points are a v1 capability that only the fused kernel implements.
+    # The detection is single-sourced (`backend.sigma_point_count`) and the
+    # refusal is unconditional, so no backend can silently score the central
+    # attributable and drop the ensemble -- which would make the same call
+    # return materially different answers depending on whether the extension
+    # happens to be built.
+    _k_sigma = sigma_point_count(att)
+    if _k_sigma > 1 and _which != "rust":
+        raise NotImplementedError(
+            f"att.sigma_points carries {_k_sigma} attributable variants, but "
+            "the Python reference backend cannot marginalize over the "
+            "attributable distribution in v0 (DESIGN §2.1, D-6). Use "
+            "backend='rust', or drop att.sigma_points to score the central "
+            "attributable."
+        )
+
     if G is None:
         G = G_SLOPE_DEFAULT
     G = float(G)
@@ -501,6 +627,20 @@ def classify(
     V_obs = np.asarray(V_obs, dtype=float)
     if R_obs.shape != (3,) or V_obs.shape != (3,):
         raise ValueError("R_obs and V_obs must be (3,) equatorial vectors")
+
+    if _which == "rust":
+        from .backend import classify_rust, strict_rust
+
+        try:
+            return classify_rust(
+                att, neo, other, R_obs, V_obs, rho_min, rho_max, n_rho,
+                n_rhodot, G, diagnostics=diagnostics, stacklevel=3,
+            )
+        except ModelNotSupported:
+            # An explicit backend="rust" makes an unsupported model an error;
+            # otherwise the Python reference is a correct answer, so use it.
+            if strict_rust(backend):
+                raise
 
     grid = build_grid(
         att,
@@ -534,6 +674,7 @@ def classify(
             n_nodes=0,
             n_masked_nonfinite=0,
             n_masked_det=0,
+            diagnostics=diagnostics,
         )
 
     rho = grid.rho
@@ -618,33 +759,21 @@ def classify(
     lam_other = float(np.sum(node_other * grid.weight))
 
     p_neo, log_lr, status = _posterior(lam_neo, lam_other)
-    if status == "both_zero":
-        warnings.warn(
-            "digest42.classify: both marginal likelihoods are zero "
-            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); the "
-            "tracklet has no support in either population model (support "
-            "truncation, DESIGN §2.6). P(NEO) is undefined.",
-            RuntimeWarning,
-            stacklevel=2,
+    _warn_status(status, lam_neo, lam_other, stacklevel=2)
+
+    if not diagnostics:
+        # Same contract as the Rust backend's diagnostics=False mode: only the
+        # scalars and the counters are meaningful.  (The reference path has
+        # already paid for the arrays; the flag exists for API symmetry.)
+        empty = np.zeros(0, dtype=float)
+        grid = RangingGrid(
+            rho=empty.copy(), rho_dot=empty.copy(), weight=empty.copy(),
+            n_rho=grid.n_rho, n_rhodot=grid.n_rhodot,
         )
-    elif status == "overflow":
-        warnings.warn(
-            "digest42.classify: both marginal likelihoods overflowed to "
-            "infinity; their ratio is indeterminate and P(NEO) = 0.5 is "
-            "returned as the symmetric limit. Rescale the population "
-            "components.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-    elif status == "nan":  # pragma: no cover - integrand is sanitized per node
-        warnings.warn(
-            "digest42.classify: a marginal likelihood is NaN "
-            f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); "
-            "this indicates a bug in a PopulationDensity implementation. "
-            "P(NEO) is undefined.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        node_neo = empty.copy()
+        node_other = empty.copy()
+        node_H = empty.copy()
+        node_q = empty.copy()
 
     return ClassificationResult(
         p_neo=p_neo,
@@ -659,6 +788,7 @@ def classify(
         n_nodes=n_nodes,
         n_masked_nonfinite=n_masked_nonfinite,
         n_masked_det=int(np.count_nonzero(det_bad)),
+        diagnostics=diagnostics,
     )
 
 
@@ -668,11 +798,30 @@ def classify_many(
     other: PopulationDensity,
     **kwargs,
 ) -> list[ClassificationResult]:
-    """Batch API. v0: a loop over classify(); vectorization is a v2 concern.
+    """Batch API.
 
     ``kwargs`` are forwarded verbatim to :func:`classify`, so a shared
     ``R_obs``/``V_obs`` (same epoch for every tracklet) or a common grid
     resolution can be passed once.
+
+    With the Python backend this is a loop over :func:`classify`; with the Rust
+    backend (``backend="rust"``, or ``"auto"`` where the extension is present)
+    the whole batch is handed to ``digest42._core`` in **one** call, the GIL is
+    released, and rayon parallelizes across tracklets.  ``n_threads`` (Rust only)
+    caps the worker count; the default uses rayon's global pool, i.e. one thread
+    per core.  Observer states are still resolved in Python (astropy), one call
+    per distinct epoch.
+
+    Memory.  The batched path materializes every result before returning, so
+    with ``diagnostics=True`` (the default) it holds the whole batch's per-node
+    arrays at once: up to 3.4 MB per tracklet at the default (1200, 50) grid,
+    2.2 MB measured on gate_v0 (admissible-region truncation removes some rho
+    columns).  Peak is **one** copy, not two — the kernel hands each node array
+    to numpy by adopting the Rust buffer, and the driver drains its result
+    vector as it converts, so a tracklet's arrays leave the Rust side before
+    the next one is touched (measured peak/retained = 1.02).  Even so, pass
+    ``diagnostics=False`` or chunk the batch when scoring more than a few
+    hundred tracklets at a time.
 
     Degenerate tracklets (empty admissible region, zero total likelihood) come
     back with ``p_neo = nan``; **that is the reliable per-tracklet signal**.
@@ -682,4 +831,84 @@ def classify_many(
     the results on ``np.isnan(res.p_neo)`` instead (and on ``res.n_nodes == 0``
     to tell an empty region from a fully truncated one).
     """
-    return [classify(att, neo, other, **kwargs) for att in atts]
+    from .backend import ModelNotSupported, resolve_backend, strict_rust
+
+    n_threads = kwargs.pop("n_threads", None)
+    if resolve_backend(kwargs.get("backend", "auto")) == "rust" and atts:
+        from .backend import classify_many_rust
+
+        try:
+            return _classify_many_rust(
+                atts, neo, other, n_threads=n_threads,
+                _impl=classify_many_rust, **kwargs
+            )
+        except ModelNotSupported:
+            if strict_rust(kwargs.get("backend")):
+                raise
+    kwargs.pop("backend", None)
+    return [classify(att, neo, other, backend="python", **kwargs) for att in atts]
+
+
+def _classify_many_rust(
+    atts: list[Attributable],
+    neo: PopulationDensity,
+    other: PopulationDensity,
+    *,
+    _impl,
+    n_threads: int | None = None,
+    R_obs: np.ndarray | None = None,
+    V_obs: np.ndarray | None = None,
+    rho_min: float = 0.01,
+    rho_max: float = 100.0,
+    n_rho: int = N_RHO_DEFAULT,
+    n_rhodot: int = N_RHODOT_DEFAULT,
+    G: float | None = None,
+    obscode: str | None = None,
+    lon_deg: float | None = None,
+    lat_deg: float | None = None,
+    height_m: float = 0.0,
+    backend: str = "auto",
+    diagnostics: bool = True,
+) -> list[ClassificationResult]:
+    """Resolve observer states, then run the whole batch in one Rust call."""
+    if G is None:
+        G = G_SLOPE_DEFAULT
+    G = float(G)
+
+    for att in atts:
+        if not np.isfinite(float(att.v_mag)):
+            raise ValueError(
+                f"att.v_mag must be finite, got {att.v_mag!r}; a missing "
+                "apparent magnitude cannot be marginalized in v0 (DESIGN §2.2)."
+            )
+
+    n = len(atts)
+    if R_obs is None or V_obs is None:
+        R_auto = np.empty((n, 3), dtype=float)
+        V_auto = np.empty((n, 3), dtype=float)
+        # One astropy call per distinct epoch; identical epochs are common in a
+        # batch and the ephemeris evaluation dominates the Python-side cost.
+        cache: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+        for k, att in enumerate(atts):
+            key = float(np.asarray(att.epoch.tdb.jd).item())
+            hit = cache.get(key)
+            if hit is None:
+                hit = observer_state(
+                    att.epoch, obscode=obscode, lon_deg=lon_deg,
+                    lat_deg=lat_deg, height_m=height_m,
+                )
+                cache[key] = hit
+            R_auto[k] = hit[0]
+            V_auto[k] = hit[1]
+        if R_obs is None:
+            R_obs = R_auto
+        if V_obs is None:
+            V_obs = V_auto
+
+    R_obs = np.broadcast_to(np.asarray(R_obs, dtype=float), (n, 3))
+    V_obs = np.broadcast_to(np.asarray(V_obs, dtype=float), (n, 3))
+
+    return _impl(
+        atts, neo, other, R_obs, V_obs, rho_min, rho_max, n_rho, n_rhodot, G,
+        diagnostics=diagnostics, n_threads=n_threads, stacklevel=4,
+    )

@@ -129,6 +129,16 @@ If the density is parameterized in different element coordinates (e.g. $(q, e, i
 than $(a, e, i)$ — the digest2 case), the corresponding reparameterization Jacobian is
 included so the measure stays consistent.
 
+**Known reference-path limitation at the celestial poles (Rust-port review, 2026-09-02).**
+At $\delta = \pm 90°$ *exactly*, the Python reference's composed determinant
+($\det$ of the assembled 6×6 product) loses accuracy — up to ~200× error — because the
+product mixes a $\sim 1/\varepsilon$ elements block with the $\rho^4\cos^2\delta \to 0$
+observables block; each factor is individually exact, and the Delaunay closed form (used
+by the Rust backend) remains correct there. Degradation is smooth and negligible by
+$|\delta| \le 89.99°$ (rel. err $\sim 10^{-13}$). Consequence: near the poles the closed
+form is the authoritative value, and backend-parity comparisons exclude
+$|\delta| = 90°$ exactly.
+
 ### 2.4 The posterior
 
 $$

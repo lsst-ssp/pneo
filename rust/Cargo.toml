@@ -1,0 +1,25 @@
+[workspace]
+members = ["."]
+
+[package]
+name = "digest42-core"
+version = "0.0.1"
+edition = "2021"
+description = "Fused Rust kernel for the digest42 Bayesian tracklet classifier"
+license = "BSD-3-Clause"
+publish = false
+
+[lib]
+name = "digest42_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py311"] }
+numpy = "0.28"
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"

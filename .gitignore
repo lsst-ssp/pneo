@@ -8,3 +8,7 @@ data/*
 !data/README.md
 validation/output/
 .ipynb_checkpoints/
+
+# Rust core kernel build products (rust/build.sh rebuilds both)
+rust/target/
+src/digest42/_core*.so
