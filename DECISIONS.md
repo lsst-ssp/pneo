@@ -306,3 +306,40 @@ indices addressed the positive block when n_pos ≥ n_neg); fixed, regression-te
 all published WP7 CIs regenerated — point estimates unchanged, CIs widened (clamped
 full-set ΔAUC now [+0.0015, +0.0253], P = 0.010; enriched full-set +0.0140
 [+0.0066, +0.0222] is the strongest ranking evidence).
+
+## D-17/D-18 erratum and addendum (2026-09-02, post-adversarial-review)
+
+The pchip adversarial review reproduced every implementation guarantee independently
+(coefficients match scipy's PchipInterpolator to 5.7e-14; mass conservation, exact
+non-negativity through density(), sampler, boundaries, backend density parity, stamp
+machinery all confirmed) but found the D-17 evidence record needed corrections:
+
+1. **Per-node cost**: the "+21–28%" figure was load contamination (bench taken at
+   loadavg 88–162 on 96 cores). Re-measured on the quiet machine with the identical
+   protocol: **≲2% at (1200, 50)** (+1.0% median over 25 interleaved reps). The cost
+   objection to pchip mode is effectively void.
+2. **Quadrature-win statement**: "improves 2%" carried no interval. The improvement's
+   bootstrap 95% CI on an independent catalogue is **[0%, +44%]** — the honest claim is
+   "no *detectable* quadrature win at (1200, 50)", and the win may be larger than
+   recorded. The grid recommendation (unchanged (1200, 50)) stands.
+3. **Mid-p reconciliation**: the report's 3.88e-3/1.62e-2 were unreproducible literals;
+   the reproducible gate-catalogue mid-p p90 is ≈7×10⁻³ (see DESIGN §2.5 erratum). The
+   *direction* of the reinterpretation (DESIGN's 3.5e-3 was never an unconditional
+   statistic) was independently confirmed.
+4. **Backend parity wording**: "bit-identical between backends" holds for the density
+   evaluation; end-to-end Λ agrees at the pre-existing D-15 level (≤2×10⁻¹⁴ here),
+   which is not a pchip regression.
+5. **Operational constraint (new)**: pchip is mutually exclusive with the D-14 clamp,
+   and it inherits D-4's 0/0 failure on fully-H-truncated tracklets exactly — so
+   **pchip cannot be the NEOCP operational configuration that D-18 recommends** (the
+   clamped histogram pair remains it). Until a v1 model's H support reaches survey
+   depth, pchip is a modelling/gate mode.
+6. **Guards added post-review**: mixed-mode component pairs (h_interpolation or
+   h_top_bin_infinite disagreeing between NEO and other) are rejected — the measured
+   mixed-pair artifact (|Δp| up to 6.4×10⁻³) is as large as the honest mode change;
+   and the WP6 harness hard-fails on a generator/scorer mode mismatch and prints the
+   mode in its summary.
+7. **Provenance correction**: due to a supervisor `git add -A` slip, the pchip
+   *implementation* physically landed in commit 3db9ef3 ("PyPI packaging"), while
+   5ed64e4 carries the study driver and report. History is pushed and stands; auditors
+   should look in 3db9ef3 for the code diff.

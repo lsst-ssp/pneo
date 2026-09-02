@@ -197,9 +197,18 @@ $H(\rho)$ depends on $\rho$ alone, so every H-bin and q-bin edge is a ρ-aligned
 discontinuity of the integrand, and $\dot\rho$ refinement buys nothing (measured: at
 fixed cost, $800{\times}100$ beats $400{\times}200$ by ~2× and $200{\times}400$ equals
 $200{\times}100$). Sensible v0 grids are ρ-heavy — $n_\rho \approx 1200$,
-$n_{\dot\rho} \approx 50$ (p90 $|\Delta p| \approx 0.0035$, max $\approx 0.01$ vs a
-$1200{\times}600$ reference). The targeted future fix is node placement on the H-bin
-edge curves, not global refinement.
+$n_{\dot\rho} \approx 50$.
+
+**Error-statistic conditioning (pchip review, 2026-09-02).** Quadrature-error
+percentiles are meaningless without their conditioning: $|\Delta p| \le \min(p, 1-p)$
+and the mixture catalogue is overwhelmingly low-$p$, so the *unconditional* p90 at
+(1200, 50) is ~10⁻⁴ regardless of quadrature quality. The originally quoted
+"p90 ≈ 3.5e-3, max ≈ 0.01" came from the WP5 review's geometry sweep (an implicitly
+mid-$p$ population); on the gate catalogue restricted to $p \in [0.05, 0.95]$ the
+honest figure vs a same-mode fine reference is **p90 ≈ 7×10⁻³** (max a few ×10⁻²).
+Also measured then: at (1200, 50) *neither* grid axis dominates any longer, in either
+density mode. The once-planned H-bin-edge node placement is superseded (D-17): the
+staircase is a minority error term at this grid.
 
 ### 2.6 Support truncation and its known artifact
 

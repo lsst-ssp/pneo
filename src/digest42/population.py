@@ -150,7 +150,16 @@ heuristic smoothing:
   interpolation condition.
 * **Non-negativity.**  ``C`` monotone ⇒ ``C' ≥ 0``.  Concretely, PCHIP's
   slopes satisfy ``0 ≤ m_k ≤ 3 min(Δ_{k-1}, Δ_k)``, which is inside the
-  Fritsch–Carlson monotonicity region for every interval.
+  Fritsch–Carlson monotonicity region for every interval.  Scope, precisely:
+  the density is non-negative **as evaluated through** :meth:`density`, which
+  is what the classifier and the sampler use, and measured exactly ``0.0`` as
+  its minimum over a dense sweep of every cell.  Evaluating the stored
+  coefficient triple directly at ``s = dH`` — the right-hand knot, which
+  :meth:`density` never reaches, because the H bins are half-open and ``s``
+  stays strictly below ``dH`` — can return ~-1e-10 *relative* to the cell
+  scale, from cancellation in the Horner form at a double root of the
+  derivative.  That value is unreachable through the public API and is not
+  clamped, so a genuine sign error could not hide behind a clamp.
 
 D-4 truncation is untouched: the density is exactly ``0.0`` outside
 ``[0, 25.5)`` and outside the q/e/i support, and the q/e/i lookup is
@@ -575,14 +584,25 @@ def _pchip_slopes(x: np.ndarray, y: np.ndarray):
     h0, h1 = h[:-1], h[1:]
     w1 = 2.0 * h1 + h0
     w2 = h1 + 2.0 * h0
-    same = (d0 * d1) > 0.0
+    # "The two secants agree in sign and neither vanishes", tested on the signs
+    # rather than on ``d0 * d1 > 0``.  The product form is what scipy uses and
+    # is equivalent on normal inputs, but it *underflows*: two same-sign
+    # secants of ~1e-200 multiply to 0, which would silently force the slope to
+    # zero and flatten a legitimately rising segment.  It also overflows for
+    # secants above ~1e154.  Neither occurs in the digest2 model (integer
+    # counts over 18 bins), so this changes nothing there; it is here so the
+    # helper is correct for any monotone data it is handed.
+    same = (np.sign(d0) == np.sign(d1)) & (d0 != 0.0)
     # Evaluate the harmonic mean only where it is defined; the dummy 1.0
-    # elsewhere keeps the expression finite (no divide-by-zero warnings) and is
-    # discarded by the ``where``.
-    whmean = (w1 / np.where(same, d0, 1.0) + w2 / np.where(same, d1, 1.0)) / (
-        w1 + w2
-    )
-    m[..., 1:-1] = np.where(same, 1.0 / whmean, 0.0)
+    # elsewhere keeps the expression finite and is discarded by the ``where``.
+    # errstate rather than a mask: with extreme (but finite) secants the
+    # reciprocals can overflow to inf in entries ``same`` already excludes, and
+    # a RuntimeWarning from a value that is about to be thrown away is noise.
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        whmean = (
+            w1 / np.where(same, d0, 1.0) + w2 / np.where(same, d1, 1.0)
+        ) / (w1 + w2)
+        m[..., 1:-1] = np.where(same, 1.0 / whmean, 0.0)
     m[..., 0] = _pchip_end_slope(h[0], h[1], delta[..., 0], delta[..., 1])
     m[..., -1] = _pchip_end_slope(h[-1], h[-2], delta[..., -1], delta[..., -2])
     return m, delta
@@ -737,6 +757,11 @@ class Digest2Histogram(PopulationDensity):
                 "down. The implemented reconstruction is H-only and "
                 "mass-conserving: pass h_interpolation='pchip'."
             )
+        # ``None`` means "no interpolation", not the string "None": without
+        # this the error below reads `unknown h_interpolation 'None'`, which
+        # sends the reader looking for a typo in a value they never typed.
+        if h_interpolation is None:
+            h_interpolation = "none"
         h_interpolation = str(h_interpolation)
         if h_interpolation not in H_INTERPOLATIONS:
             raise ValueError(

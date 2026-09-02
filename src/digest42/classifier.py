@@ -583,7 +583,19 @@ def classify(
     |dp_neo| ~ 2e-16, max Lambda relative error ~4e-13, identical
     ``n_masked_nonfinite`` and ``n_masked_det`` node counts.
     """
-    from .backend import ModelNotSupported, resolve_backend, sigma_point_count
+    from .backend import (
+        ModelNotSupported,
+        check_component_pair,
+        resolve_backend,
+        sigma_point_count,
+    )
+
+    # The two components must agree on every paired mode flag (h_interpolation
+    # [D-10/D-17], h_top_bin_infinite [D-14]): a mixed pair puts a modelling
+    # artifact of the same order as the honest mode change straight into the
+    # posterior (pchip review, F1). Guarded here so the PYTHON reference path
+    # refuses hand-built mixed pairs just like the Rust path does.
+    check_component_pair(neo, other)
 
     _which = resolve_backend(backend)
 
@@ -831,7 +843,14 @@ def classify_many(
     the results on ``np.isnan(res.p_neo)`` instead (and on ``res.n_nodes == 0``
     to tell an empty region from a fully truncated one).
     """
-    from .backend import ModelNotSupported, resolve_backend, strict_rust
+    from .backend import (
+        ModelNotSupported,
+        check_component_pair,
+        resolve_backend,
+        strict_rust,
+    )
+
+    check_component_pair(neo, other)  # see classify(); guards the python path too
 
     n_threads = kwargs.pop("n_threads", None)
     if resolve_backend(kwargs.get("backend", "auto")) == "rust" and atts:

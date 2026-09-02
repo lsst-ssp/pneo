@@ -61,6 +61,17 @@ Limitations of the Rust backend (it falls back to Python unless
   reference rather than failing where the reference would succeed;
 * ``diagnostics=True`` is only defined for a single attributable variant.
 
+Independently of the backend choice, the two components must agree on every
+*paired* density-mode flag — ``h_interpolation`` (D-10) and
+``h_top_bin_infinite`` (D-14).  Both change the effective model without touching
+the geometry, and P(NEO) is a ratio of the two components' marginal likelihoods,
+so a one-sided setting yields an artifact of the mismatch rather than the model
+with that knob applied.  :func:`check_component_pair` enforces this and is
+called from :func:`core_model_for` and both Rust entry points; it raises
+``ValueError`` (a caller error) rather than :class:`ModelNotSupported`, because
+falling back to the reference would score the artifact instead of refusing it.
+See that function's docstring for the one place the guard does not reach.
+
 Sigma points (``att.sigma_points`` / ``att.sigma_weights``, a ``(K, 5)`` matrix
 of ``(ra, dec, ra_rate, dec_rate, v_mag)`` variants and ``(K,)`` weights) are
 implemented **only** by the kernel, which accumulates
@@ -86,6 +97,7 @@ __all__ = [
     "requested_backend",
     "resolve_backend",
     "strict_rust",
+    "check_component_pair",
     "core_model_for",
     "classify_rust",
     "classify_many_rust",
@@ -241,6 +253,70 @@ def _edges_of(density) -> list[np.ndarray]:
         ) from exc
 
 
+#: Per-component density-mode flags that BOTH components must agree on.
+#:
+#: Each entry is ``(attribute, default, what it selects)``.  Both are knobs that
+#: change the effective population model without touching the geometry, and
+#: P(NEO) is a ratio of the two components' marginal likelihoods — so applying
+#: one to a single side does not produce "the model with that knob", it produces
+#: an artifact of the mismatch.  Measured on gate_v0: a
+#: (pchip NEO, histogram other) pair moves p(NEO) by up to 6.4e-3, i.e. as much
+#: as the entire honest mode change, in a direction that is pure modelling
+#: error.  The class docstrings of both knobs already said "both components
+#: together"; this is the check that enforces it.
+_PAIRED_MODE_FLAGS = (
+    ("h_interpolation", "none", "the H reconstruction (D-10)"),
+    ("h_top_bin_infinite", False, "the digest2-emulation H clamp (D-14)"),
+)
+
+
+def check_component_pair(neo, other) -> None:
+    """Raise ``ValueError`` if the two components disagree on a density mode.
+
+    Single source of truth for the pairing rule, so the kernel, the model cache
+    and the entry points cannot drift apart on it.  Only the *paired* flags are
+    checked here; genuinely per-component properties (``parameterization``,
+    ``label``, the bin structure) are validated where they are consumed.
+
+    Called from :func:`core_model_for` and from both Rust entry points, so
+    every ``backend="rust"`` call and every ``backend="auto"`` call on a build
+    with the extension present is guarded.
+
+    .. warning::
+       ``backend="python"`` on a hand-built mismatched pair is **not** guarded
+       by this function, because the reference path in
+       :mod:`digest42.classifier` never funnels the component pair through this
+       module — it calls ``neo.density(...)`` and ``other.density(...)``
+       directly.  Closing that hole needs one call to this function in
+       ``classifier.classify`` / ``classify_many``; it is recorded here rather
+       than worked around, because a guard that fires on one backend and not
+       the other would be worse than one whose scope is written down.
+       :meth:`~digest42.population.Digest2Histogram.neo_other_pair` and
+       :meth:`~digest42.population.Digest2Histogram.from_classes` cannot
+       produce a mismatched pair, so this is reachable only by pairing two
+       separately constructed components by hand.
+    """
+    for attr, default, what in _PAIRED_MODE_FLAGS:
+        a = getattr(neo, attr, default)
+        b = getattr(other, attr, default)
+        if a == b:
+            continue
+        raise ValueError(
+            f"the two population components disagree on {attr!r}: "
+            f"{getattr(neo, 'label', 'neo')!r} has {a!r} and "
+            f"{getattr(other, 'label', 'other')!r} has {b!r}. "
+            f"{what} must be applied to BOTH components or "
+            "neither: P(NEO) is the ratio of the two components' marginal "
+            "likelihoods, so a one-sided change compares two different "
+            "effective models and the resulting posterior is an artifact of "
+            "the mismatch, not a measurement of the knob (measured on "
+            "gate_v0: up to 6.4e-3 in p(NEO), the size of the whole honest "
+            "mode change). Build the pair with "
+            "Digest2Histogram.neo_other_pair(..., "
+            f"{attr}=...), which cannot produce a mismatch."
+        )
+
+
 def _h_coeffs_of(density) -> np.ndarray | None:
     """The smooth-in-H Horner coefficients of a component, or None.
 
@@ -300,11 +376,16 @@ def _fingerprint(density) -> tuple:
     leaves the density *table* untouched, so a fingerprint that ignored it
     would hand back a stale piecewise-constant handle for a smooth model.
 
-    Residual assumption, deliberately not defended against: an in-place edit
-    that preserves the buffer address, the shape, the exact sum *and* every
-    sampled element would go unnoticed.  Population components are expected to
-    be immutable once used; this guards against the plausible accident, not
-    against an adversary.
+    Residual assumption, deliberately not defended against, and the same on
+    both halves: an in-place edit that preserves the buffer address, the shape,
+    the exact sum *and* every sampled element would go unnoticed — for the
+    density table and for the coefficient block alike.  Population components
+    are expected to be immutable once used (``Digest2Histogram`` marks
+    ``h_coeffs`` read-only and hands out a read-only view of ``counts``); this
+    guards against the plausible accident, not against an adversary.  The one
+    asymmetry left is unavoidable: the table is sampled every ~90th value and
+    the coefficients every 33rd, because the arrays are different sizes and
+    both budgets are fixed sample counts rather than fixed strides.
 
     A component that has no ``_density_table`` (so the table is rebuilt from
     ``counts``/``bin_volume`` on every call) gets a fresh buffer address each
@@ -324,10 +405,21 @@ def _fingerprint(density) -> tuple:
     if co is None:
         co_key: tuple = ()
     else:
-        cf = np.ascontiguousarray(np.asarray(co, dtype=float)).reshape(-1)
-        cstep = max(1, cf.size // 512)
+        co = np.asarray(co, dtype=float)
+        cf = np.ascontiguousarray(co).reshape(-1)
+        # Denser stride than the table's, and the buffer address as well, so
+        # the coefficient block is checked to the SAME standard as the table
+        # (the review found this half weaker than the other).  4096 samples of
+        # 137,808 coefficients is every 33rd value.
+        cstep = max(1, cf.size // 4096)
+        try:
+            co_addr = int(co.__array_interface__["data"][0])
+        except (AttributeError, KeyError, TypeError):  # pragma: no cover
+            co_addr = -1
         co_key = (
             cf.size,
+            tuple(int(x) for x in co.shape),
+            co_addr,
             float(cf.sum()),
             hash(cf[::cstep].tobytes()),
         )
@@ -365,6 +457,12 @@ def core_model_for(neo, other):
     core = _load_core()
     if core is None:  # pragma: no cover - guarded by resolve_backend
         raise RuntimeError("digest42._core is not available")
+
+    # Before the cache, so a mismatched pair can never be memoized: this is a
+    # ValueError (the caller made a modelling error) and NOT ModelNotSupported,
+    # because falling back to the Python reference would score the artifact
+    # instead of refusing it.
+    check_component_pair(neo, other)
 
     key = (_fingerprint(neo), _fingerprint(other))
     hit = _MODEL_CACHE.get(key)
@@ -648,6 +746,7 @@ def classify_rust(
     stacklevel: int = 3,
 ):
     """Single-tracklet Rust path. ``R_obs``/``V_obs`` must already be resolved."""
+    check_component_pair(neo, other)
     core = _load_core()
     n_rho, n_rhodot = _grid_counts(n_rho, n_rhodot)
     cm = core_model_for(neo, other)
@@ -690,6 +789,7 @@ def classify_many_rust(
     ``R_obs``/``V_obs`` are ``(T, 3)`` arrays, already resolved per tracklet.
     The GIL is released for the whole batch.
     """
+    check_component_pair(neo, other)
     core = _load_core()
     n_rho, n_rhodot = _grid_counts(n_rho, n_rhodot)
     cm = core_model_for(neo, other)

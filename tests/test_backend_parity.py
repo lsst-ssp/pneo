@@ -1592,7 +1592,7 @@ def test_model_cache_distinguishes_the_h_interpolation_mode(d2pair, pchip_pair):
     assert core_model_for(sm_neo, sm_other) is b
 
 
-def test_declared_h_interpolation_without_coefficients_is_refused(d2pair):
+def test_declared_h_interpolation_without_coefficients_is_refused(pchip_pair):
     """No silent downgrade to the flat table.
 
     A component that claims a smooth mode but cannot produce coefficients is
@@ -1612,7 +1612,9 @@ def test_declared_h_interpolation_without_coefficients_is_refused(d2pair):
             self.h_interpolation = "pchip"
             self.h_coeffs = None
 
-    neo, other = d2pair
+    # The partner is in the SAME mode, so `check_component_pair` passes and the
+    # coefficient validation is what this test exercises.
+    neo, other = pchip_pair
     with pytest.raises(ModelNotSupported, match="h_coeffs"):
         core_model_for(Liar(neo), other)
 
@@ -1641,8 +1643,10 @@ def test_declared_h_interpolation_without_coefficients_is_refused(d2pair):
             self.h_interpolation = "akima"
             self.h_coeffs = np.zeros((29, 8, 11, 18, 3))
 
+    # BOTH sides declare the unknown mode, so `check_component_pair` is happy
+    # and the unknown-mode refusal is what this asserts.
     with pytest.raises(ModelNotSupported, match="does not know"):
-        core_model_for(FutureMode(neo), other)
+        core_model_for(FutureMode(neo), FutureMode(other))
 
 
 def test_core_model_rejects_bad_coefficient_arrays(core, d2pair):
@@ -1688,22 +1692,139 @@ def test_core_model_rejects_bad_coefficient_arrays(core, d2pair):
                                         h_top_bin_infinite=True)
 
 
-def test_pchip_one_sided_components_are_allowed_by_the_kernel(core, d2pair,
-                                                              pchip_pair):
-    """A mixed pair is representable in Rust; policy lives in Python.
+def test_mixed_mode_component_pairs_are_refused(core, d2pair, pchip_pair,
+                                                clamped_pair):
+    """A one-sided density mode is a caller error, not a supported model.
 
-    `neo_other_pair` always gives both components the same mode (a mixed pair
-    would put a modelling artifact straight into the posterior ratio), but the
-    kernel keeps the two `Histogram`s independent, exactly as it does for the
-    D-14 flag.  Pinned so a future refactor does not quietly couple them and
-    change what the glue can express.
+    This test previously pinned the *opposite* behaviour — it asserted that a
+    (pchip NEO, histogram other) pair built fine and evaluated each side in its
+    own mode, on the reasoning that the kernel keeps the two `Histogram`s
+    independent and "policy lives in Python".  The adversarial review showed
+    there was no such policy anywhere: `classify` ran the mixed pair happily on
+    both backends and moved p(NEO) by up to 6.4e-3, which is the size of the
+    entire honest mode change.  So the policy now lives in
+    `backend.check_component_pair`, and both mismatch axes are covered.
+
+    `ValueError`, deliberately, not `ModelNotSupported`: the latter means "the
+    reference can do this and the kernel cannot" and makes `auto` fall back —
+    which here would score the artifact instead of refusing it.
     """
-    from digest42.backend import core_model_for
+    from digest42.backend import (ModelNotSupported, check_component_pair,
+                                  core_model_for)
 
-    cm = core_model_for(pchip_pair[0], d2pair[1])
-    assert "h_interpolation=(\"pchip\", \"none\")" in repr(cm)
-    el = np.ascontiguousarray(np.array([[1.0, 0.5, 0.5], [2.5, 0.15, 0.1]]))
-    h = np.ascontiguousarray(np.array([19.3, 24.7]))
-    a, b = cm.density_at(el, h)
-    assert np.array_equal(a, pchip_pair[0].density(el, h))
-    assert np.array_equal(b, d2pair[1].density(el, h))
+    hist_neo, hist_other = d2pair
+    sm_neo, sm_other = pchip_pair
+    cl_neo, cl_other = clamped_pair
+
+    cases = [
+        ("h_interpolation", sm_neo, hist_other),
+        ("h_interpolation", hist_neo, sm_other),
+        ("h_top_bin_infinite", cl_neo, hist_other),
+        ("h_top_bin_infinite", hist_neo, cl_other),
+    ]
+    for attr, a, b in cases:
+        with pytest.raises(ValueError, match=attr) as ei:
+            check_component_pair(a, b)
+        # not the recoverable kind: `auto` must not fall back past this
+        assert not isinstance(ei.value, ModelNotSupported)
+        with pytest.raises(ValueError, match=attr):
+            core_model_for(a, b)
+        att, R, V = _gate_tracklets(1, seed=4242)[0]
+        with pytest.raises(ValueError, match=attr):
+            classify(att, a, b, R, V, backend="rust", **FAST)
+        with pytest.raises(ValueError, match=attr):
+            classify_many([att], a, b, R_obs=R.reshape(1, 3),
+                          V_obs=V.reshape(1, 3), backend="rust", **FAST)
+
+    # Matched pairs of every flavour still build.
+    for a, b in (d2pair, pchip_pair, clamped_pair):
+        check_component_pair(a, b)
+        assert core_model_for(a, b) is not None
+
+
+def test_mixed_mode_guard_does_not_fire_on_matched_or_unaware_components(
+        d2pair):
+    """The guard is about the paired flags only, and defaults to "matched".
+
+    A component that has never heard of either knob (a custom
+    `PopulationDensity`) must pair with anything, since `getattr` defaults
+    stand in for both flags; and differing `label`/`variant`/`parameterization`
+    are NOT the guard's business.
+    """
+    from digest42.backend import check_component_pair
+
+    class Minimal:
+        parameterization = "aei"
+        label = "custom"
+
+    neo, other = d2pair
+    check_component_pair(Minimal(), Minimal())
+    check_component_pair(Minimal(), other)      # other is h_interpolation="none"
+    check_component_pair(neo, Minimal())
+    # a differing parameterization is legitimate and must not be flagged here
+    check_component_pair(neo, Minimal())
+
+
+def test_mixed_mode_artifact_is_real_and_the_guard_is_what_stops_it(
+        d2pair, pchip_pair):
+    """Measure the artifact the guard prevents, so it cannot be dismissed.
+
+    Bypasses `check_component_pair` by driving the kernel handle directly, and
+    compares the mixed pair's p(NEO) against BOTH honest modes on real
+    tracklets.  If this ever comes out negligible the guard could be argued
+    down; recording the number is what makes that argument checkable.
+    """
+    from digest42.backend import (_build_core_model, _edges_of, _table_of,
+                                  core_model_for)
+    from digest42 import _core
+
+    hist_neo, hist_other = d2pair
+    sm_neo, sm_other = pchip_pair
+    tabs = [_table_of(sm_neo), _table_of(hist_other)]
+    mixed = _build_core_model(_core, tabs, _edges_of(sm_neo),
+                              ["qei", "qei"], sm_neo, hist_other)
+    assert 'h_interpolation=("pchip", "none")' in repr(mixed)
+
+    # The artifact CANNOT be seen node by node: the two components are exactly
+    # complementary at q = 1.3 AU, so at any single (q, e, i, H) point one of
+    # them is identically zero and the node-level P(NEO) is 0 or 1 in every
+    # mode.  The mismatch only shows up once the admissible region is
+    # integrated over, mixing nodes from both sides of q = 1.3 — so this has to
+    # be measured through the kernel's own integral.
+    cases = _gate_tracklets(40, seed=4242)
+    worst_artifact = 0.0
+    worst_honest = 0.0
+    for att, R, V in cases:
+        p = {}
+        for name, handle in (("mixed", mixed),
+                             ("hist", core_model_for(hist_neo, hist_other)),
+                             ("smooth", core_model_for(sm_neo, sm_other))):
+            out = _core.classify_core(
+                handle,
+                np.array([[att.ra, att.dec, att.ra_rate, att.dec_rate,
+                           att.v_mag]]),
+                np.ones(1),
+                np.ascontiguousarray(R, dtype=float),
+                np.ascontiguousarray(V, dtype=float),
+                0.01, 100.0, FAST["n_rho"], FAST["n_rhodot"],
+                G_SLOPE_DEFAULT, False,
+            )
+            ln, lo = float(out["lambda_neo"]), float(out["lambda_other"])
+            p[name] = ln / (ln + lo) if (ln + lo) > 0.0 else float("nan")
+        if not all(np.isfinite(v) for v in p.values()):
+            continue
+        worst_artifact = max(worst_artifact, abs(p["mixed"] - p["hist"]))
+        worst_honest = max(worst_honest, abs(p["smooth"] - p["hist"]))
+    # Not vacuous: the honest mode change moves something.
+    assert worst_honest > 1e-5
+    # And the mismatch is a displacement of the same ORDER as the effect under
+    # study — a few times 1e-3, which is why it has to be refused rather than
+    # documented.  The measured ratio is grid- and sample-dependent (this runs
+    # 40 tracklets at the fast grid; the review measured 6.4e-3 on a larger
+    # set), so the assertion is on the magnitude, not on an ordering.
+    assert worst_artifact > 1e-3
+    print(f"\n  mixed-pair artifact: max |dp| = {worst_artifact:.3e}; the "
+          f"honest mode change on the same 40 tracklets: {worst_honest:.3e} "
+          f"(ratio {worst_artifact / worst_honest:.2f})")
+
+
