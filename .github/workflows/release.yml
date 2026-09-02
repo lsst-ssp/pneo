@@ -15,10 +15,10 @@ name: Release
 #     the matrix is per platform, not per platform x interpreter.
 #
 # Triggers:
-#   * a **published GitHub release**: builds, smoke-tests, then publishes to
-#     PyPI via Trusted Publishing (OIDC, no API token).  The tag must be
-#     `v<version>` -- enforced by the `version-check` job below, because the
-#     `release` event cannot be filtered on the tag pattern here.
+#   * a **pushed vX.Y.Z tag**: builds, smoke-tests, then publishes to PyPI via
+#     Trusted Publishing (OIDC, no API token).  The version IS the tag
+#     (setuptools-scm); `version-check` fails fast if the checkout does not
+#     resolve to exactly the tag.
 #   * **workflow_dispatch**: the same build and smoke test with no publish
 #     step at all, so a release can be rehearsed and the artifacts inspected
 #     from the run page.  There is no TestPyPI leg by maintainer decision.
@@ -54,10 +54,11 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # One version string, four places.  This job is the "single source of truth"
-  # mechanism: pyproject.toml [project].version is the truth and the other three
-  # must agree with it.  It runs first and everything else needs it, so a
-  # mismatch costs one 20-second job instead of a yanked release.
+  # The git tag is the single source of truth (setuptools-scm).  This job
+  # resolves it, asserts nothing in the tree carries a competing static version
+  # (pyproject, __init__, the crate), and re-checks the packaging invariants.
+  # It runs first and everything else needs it, so a mismatch costs one
+  # 20-second job instead of a yanked release.
   # ---------------------------------------------------------------------------
   version-check:
     name: version consistency
@@ -67,12 +68,17 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # setuptools-scm resolves the version from tags
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
-      - name: pyproject == __init__ == crate == tag, and abi3 floor == requires-python
+      - name: Install setuptools-scm
+        run: python -m pip install "setuptools-scm>=8"
+
+      - name: scm version == tag; no static versions anywhere; abi3 floor == requires-python
         id: check
         env:
           # Never interpolate a tag name straight into a shell script.
@@ -87,26 +93,31 @@ jobs:
 
           with open("pyproject.toml", "rb") as fh:
               pp = tomllib.load(fh)
-          version = pp["project"]["version"]
-          print(f"pyproject.toml   [project].version   {version}")
+          # setuptools-scm is the single source of truth (the git tag).
+          if "version" in pp.get("project", {}):
+              fail.append("pyproject.toml carries a static [project].version; "
+                          "the version is setuptools-scm-derived (dynamic)")
+          if "version" not in pp["project"].get("dynamic", []):
+              fail.append("[project].dynamic must include 'version'")
+          import subprocess
+          version = subprocess.run(
+              [sys.executable, "-m", "setuptools_scm"],
+              capture_output=True, text=True, check=True).stdout.strip()
+          print(f"setuptools-scm   resolved version    {version}")
 
           src = open("src/digest42/__init__.py", encoding="utf-8").read()
-          m = re.search(r'^__version__\s*=\s*"([^"]+)"', src, re.M)
-          init = m.group(1) if m else None
-          print(f"__init__.py      __version__         {init}")
-          if init != version:
-              fail.append(f"src/digest42/__init__.py __version__ is {init!r}, "
-                          f"pyproject.toml says {version!r}")
+          if re.search(r'^__version__\s*=\s*"\d', src, re.M):
+              fail.append("src/digest42/__init__.py hardcodes __version__; it "
+                          "must read importlib.metadata")
 
-          # rust/Cargo.toml is read only, never written, by the release
-          # machinery; bumping it is part of the manual version bump.
+          # The crate is version-less (publish = false): the package version
+          # lives in the git tag, and the crate is an implementation detail.
           with open("rust/Cargo.toml", "rb") as fh:
               crate = tomllib.load(fh)
-          crate_version = crate["package"]["version"]
-          print(f"rust/Cargo.toml  [package].version   {crate_version}")
-          if crate_version != version:
-              fail.append(f"rust/Cargo.toml version is {crate_version!r}, "
-                          f"pyproject.toml says {version!r}")
+          if "version" in crate.get("package", {}):
+              fail.append("rust/Cargo.toml must not carry a [package] version")
+          if crate.get("package", {}).get("publish", True):
+              fail.append("rust/Cargo.toml must set publish = false")
 
           # The packaging invariants the wheel depends on.  Losing module-name
           # would silently publish the extension as a top-level `digest42_core`
@@ -142,11 +153,17 @@ jobs:
           tag = os.environ.get("RELEASE_TAG", "")
           if tag:
               print(f"pushed tag                           {tag}")
+              # On an exact, clean tag checkout setuptools-scm resolves to the
+              # tag itself; a dev/local suffix here means the tag is not what
+              # is being built.
               if tag != f"v{version}":
-                  fail.append(f"pushed tag {tag!r} is not 'v{version}'; tag "
-                              f"v<version> or fix the version first")
+                  fail.append(f"pushed tag {tag!r} but setuptools-scm resolved "
+                              f"{version!r}; the checkout is not exactly the tag")
+              if "+" in version or ".dev" in version:
+                  fail.append(f"resolved version {version!r} is not a clean "
+                              f"release version")
           else:
-              print("not a tag push: tag check skipped (rehearsal)")
+              print(f"not a tag push: rehearsal build at {version}")
 
           if fail:
               for f in fail:
@@ -170,6 +187,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # setuptools-scm derives the sdist version from git
 
       - uses: actions/setup-python@v7
         with:
@@ -261,6 +280,29 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+
+      # maturin cannot run setuptools-scm, so the resolved version (from
+      # version-check, i.e. from the tag) is stamped into the workspace
+      # pyproject as a static [project].version before the build.  The stamp
+      # exists only in the runner's workspace; the repository never carries a
+      # static version.  The `metadata` job diffs the sdist's and every wheel's
+      # METADATA afterwards, so a stamping bug cannot ship silently.
+      - name: Stamp the resolved version for maturin
+        shell: python
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          import os, re
+          from pathlib import Path
+          v = os.environ["VERSION"]
+          assert re.fullmatch(r"[0-9A-Za-z_.+-]+", v), f"suspicious version {v!r}"
+          p = Path("pyproject.toml")
+          t = p.read_text()
+          t2, n = re.subn(r'^dynamic = \["version"\]$',
+                          f'version = "{v}"', t, flags=re.M)
+          assert n == 1, "expected exactly one dynamic-version line to stamp"
+          p.write_text(t2)
+          print(f"stamped version = {v}")
 
       - name: maturin build
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0

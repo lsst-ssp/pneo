@@ -672,7 +672,9 @@ fn rho_nodes<'py>(
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // The crate carries no version (publish = false); the package version is
+    // the git tag via setuptools-scm.  Report nothing rather than "0.0.0".
+    m.add("__version__", "(digest42 package version; see digest42.__version__)")?;
     m.add("COND_MAX", consts::COND_MAX)?;
     m.add("UnsupportedModel", m.py().get_type::<UnsupportedModel>())?;
     m.add_class::<CoreModel>()?;

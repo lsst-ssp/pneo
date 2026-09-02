@@ -18,4 +18,9 @@ __all__ = [
     "build_grid",
 ]
 
-__version__ = "0.0.1"
+try:  # single source of truth: installed metadata (setuptools-scm derived)
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__ = _pkg_version("digest42")
+except PackageNotFoundError:  # running from an uninstalled source tree
+    __version__ = "0.0.0+uninstalled"

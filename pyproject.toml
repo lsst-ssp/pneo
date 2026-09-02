@@ -29,16 +29,21 @@
 [build-system]
 # >=77 for PEP 639 (`license` as an SPDX expression, License-Expression in the
 # metadata).  maturin needs no entry here: it is never the PEP 517 backend.
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "digest42"
-# Single source of truth for the release version.  Two copies must track it:
-# `src/digest42/__init__.py:__version__` and `[package] version` in
-# rust/Cargo.toml.  The `version-check` job in .github/workflows/release.yml
-# fails the release if the three disagree, or if the git tag is not `v<version>`.
-version = "0.0.1"
+# The version is derived from git by setuptools-scm: a `vX.Y.Z` tag IS the
+# version (and pushing one publishes the release -- see RELEASING.md); between
+# tags, dev installs get `X.Y.(Z+1).devN+g<hash>`.  There is no hand-maintained
+# version string anywhere: `__init__.__version__` reads installed metadata, and
+# rust/Cargo.toml carries no version (publish = false; the crate is an
+# implementation detail of this package).  The maturin wheel build cannot run
+# setuptools-scm, so release.yml resolves the version from the tag and stamps
+# it into the workspace pyproject before `maturin build` -- see the
+# `version-check` job.
+dynamic = ["version"]
 description = "Bayesian NEO tracklet classification by ranging over topocentric distance and range-rate"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -102,3 +107,8 @@ exclude = ["**/__pycache__/**", "**/*.py[cod]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools_scm]
+# A build from a tarball with no .git (and no PKG-INFO) still installs, with a
+# version that is obviously not a release.
+fallback_version = "0.0.0+unknown"

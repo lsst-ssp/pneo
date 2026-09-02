@@ -55,13 +55,13 @@ platform × interpreter, and a new Python release needs no new wheel.
 
 ## Cutting a release
 
-1. **Bump the version in three files** (see [the version rule](#the-version-rule)):
-   - `pyproject.toml` → `[project] version`
-   - `src/digest42/__init__.py` → `__version__`
-   - `rust/Cargo.toml` → `[package] version`, then run
-     `cargo update --workspace --manifest-path rust/Cargo.toml` (or any cargo
-     build) so `rust/Cargo.lock` records the new crate version — the wheel build
-     runs `--locked` and fails on a stale lockfile.
+1. **There is nothing to bump.** The version is the git tag (setuptools-scm):
+   pyproject declares `dynamic = ["version"]`, `__init__.__version__` reads the
+   installed metadata, and the Rust crate carries no version at all
+   (`publish = false`). Between tags, dev installs report
+   `X.Y.(Z+1).devN+g<hash>`. The `version-check` job fails the release if any
+   file grows a competing static version, or if the checkout does not resolve
+   to exactly the pushed tag.
 2. **Get CI green on `main`** — the release workflow does *not* re-run the test
    suite; it smoke-tests the built wheel. `ci.yml` on the release commit is the
    evidence that both backends pass.
@@ -69,9 +69,8 @@ platform × interpreter, and a new Python release needs no new wheel.
    (see [below](#rehearsing-without-publishing)) and look at the artifacts.
 4. **Commit, tag, push**:
    ```sh
-   git commit -am "Release v0.1.0"
    git tag -a v0.1.0 -m "digest42 0.1.0"
-   git push origin main --follow-tags
+   git push origin v0.1.0        # <- this publishes to PyPI
    ```
 5. **The tag push in step 4 is the release** — the workflow fires on it
    directly. Optionally add a GitHub release for human-readable notes
@@ -109,18 +108,25 @@ The build steps are also runnable locally; see
 
 ## The version rule
 
-`pyproject.toml`'s `[project] version` is the single source of truth. Two copies
-have to track it, and the `version-check` job fails the release if they do not:
+**The git tag is the single source of truth** (setuptools-scm). There is no
+hand-maintained version string anywhere:
 
-| place | why it exists separately |
+| place | what it does now |
 | --- | --- |
-| `src/digest42/__init__.py` `__version__` | the runtime attribute; must not depend on package metadata being installed |
-| `rust/Cargo.toml` `[package] version` | cargo owns it, and it is what `digest42._core.__version__` reports |
+| `pyproject.toml` | `dynamic = ["version"]` + `[tool.setuptools_scm]` (fallback `0.0.0+unknown` for tarball installs without `.git`); setuptools resolves the version at build time for the sdist and editable installs |
+| `src/digest42/__init__.py` | `__version__` reads `importlib.metadata` (falls back to `0.0.0+uninstalled` in an uninstalled source tree) |
+| `rust/Cargo.toml` | carries **no version** (`publish = false`; Cargo ≥ 1.75 defaults it); the crate is an implementation detail |
+| `release.yml` wheels job | maturin cannot run setuptools-scm, so the resolved version is **stamped** into the runner-workspace pyproject before `maturin build`; the `metadata` job diffs sdist vs wheel METADATA so a stamping bug cannot ship |
 
-`version-check` also enforces, on every run:
+Dev installs (`pip install -e .`) report `X.Y.(Z+1).devN+g<hash>` between tags;
+the reported version is frozen at install time (reinstall to refresh). CI
+checkouts use `fetch-depth: 0` so tags are visible to setuptools-scm.
 
-- the release tag is exactly `v<version>` (the `release` event cannot be
-  filtered on a tag pattern in `on:`, so it is checked here instead);
+`version-check` enforces, on every run:
+
+- on a tag push, setuptools-scm must resolve to exactly the tag (clean, no
+  `.dev`/local suffix — otherwise the checkout is not the tag);
+- no file has grown a competing static version (pyproject, `__init__`, crate);
 - `[tool.maturin] module-name == "digest42._core"` and
   `python-source == "src"`, matching `[tool.setuptools.packages.find] where` —
   lose the first and the wheel would silently ship a top-level `digest42_core`
@@ -130,7 +136,7 @@ have to track it, and the `version-check` job fails the release if they do not:
   true while that holds.
 
 Nothing in the release machinery *writes* `rust/Cargo.toml`; it is read-only to
-CI and to the workflow, and bumping it is part of step 1 above.
+CI and to the workflow, and it never needs bumping.
 
 ## Platform coverage, and how to extend it
 
