@@ -129,6 +129,15 @@ If the density is parameterized in different element coordinates (e.g. $(q, e, i
 than $(a, e, i)$ — the digest2 case), the corresponding reparameterization Jacobian is
 included so the measure stays consistent.
 
+**Attribution of the closed form (literature search, 2026-09-05).** The element-space
+factor $|\det \partial E/\partial(\mathbf{r},\mathbf{v})| = 2/(\mu^{3/2}\sqrt{a}\,e\sin i)$
+via Delaunay canonicity is prior art: Peiris & Tremaine 2003 (ApJ 599, 237, §2.3, as a
+phase-space volume element), Tremaine 2020, and — the same derivation for the same
+Bayesian prior-transformation purpose — Masuda & Nunota 2026 (arXiv:2605.12982, ApJ
+accepted, exoplanet orbit inference). What is ours is the composition with the
+observable block ρ⁴cos²δ for the (attributable, ρ, ρ̇) parameterization and its use as
+a population change of measure in short-arc classification. The paper cites accordingly.
+
 **Known reference-path limitation at the celestial poles (Rust-port review, 2026-09-02).**
 At $\delta = \pm 90°$ *exactly*, the Python reference's composed determinant
 ($\det$ of the assembled 6×6 product) loses accuracy — up to ~200× error — because the
