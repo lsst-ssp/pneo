@@ -62,21 +62,21 @@ class Attributable:
 #: requires the optional ``jplephem`` package AND a one-time ~32 MB download of
 #: ``de440s.bsp`` into the astropy cache (``~/.astropy/cache/download``); after
 #: that first fetch it works offline. Neither ``jplephem`` nor the kernel is a
-#: declared dependency of digest42 (IMPLEMENTATION §1 lists numpy/astropy/
+#: declared dependency of ds42 (IMPLEMENTATION §1 lists numpy/astropy/
 #: matplotlib only), so in a stock install this falls through to ``"builtin"``.
 #:
 #: ``"builtin"`` is astropy's ERFA ``epv00`` analytic series (a fit to JPL
 #: DE405). It needs no downloads and no extra packages. Measured against JPL
 #: Horizons/DE441 it reproduces the heliocentric Earth state to ~9e-9 AU and
 #: ~2e-10 AU/day over 2020-2026 -- two orders of magnitude inside the WP1
-#: acceptance tolerances -- so it is the ephemeris digest42 v0 ships with.
+#: acceptance tolerances -- so it is the ephemeris ds42 v0 ships with.
 EPHEMERIS_PREFERENCE: tuple[str, ...] = ("jpl", "builtin")
 
 _ephemeris_cache: str | None = None
 
 
 def ephemeris_in_use() -> str:
-    """Return the name of the planetary ephemeris digest42 will use.
+    """Return the name of the planetary ephemeris ds42 will use.
 
     The first entry of :data:`EPHEMERIS_PREFERENCE` that astropy can actually
     load, resolved once per process and then cached. Never raises: it falls back
@@ -174,7 +174,7 @@ def observatory_location(
             lon, rho_cos_phi, rho_sin_phi = MPC_OBSCODES[code]
         except KeyError:
             raise KeyError(
-                f"MPC observatory code {obscode!r} is not in the digest42 v0 "
+                f"MPC observatory code {obscode!r} is not in the ds42 v0 "
                 f"built-in table (known: {sorted(MPC_OBSCODES)}). Pass "
                 f"lon_deg/lat_deg/height_m explicitly instead."
             ) from None

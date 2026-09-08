@@ -31,10 +31,10 @@ REQUIRED = (
     "MANIFEST.in",
     "README.md",
     "PKG-INFO",
-    "src/digest42/__init__.py",
-    "src/digest42/backend.py",
-    "src/digest42/classifier.py",
-    "src/digest42/population.py",
+    "src/ds42/__init__.py",
+    "src/ds42/backend.py",
+    "src/ds42/classifier.py",
+    "src/ds42/population.py",
     "rust/Cargo.toml",
     "rust/Cargo.lock",
     "rust/build.sh",
@@ -76,8 +76,8 @@ def main() -> int:
     if not sdist.is_file():
         fail(f"{sdist} does not exist")
 
-    if args.version and sdist.name != f"digest42-{args.version}.tar.gz":
-        fail(f"{sdist.name}: expected digest42-{args.version}.tar.gz")
+    if args.version and sdist.name != f"ds42-{args.version}.tar.gz":
+        fail(f"{sdist.name}: expected ds42-{args.version}.tar.gz")
 
     print(f"sdist: {sdist.name} ({sdist.stat().st_size / 1e6:.2f} MB)")
 

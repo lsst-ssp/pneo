@@ -1,12 +1,12 @@
 name: digest2 population model
 description: >
   Put data/digest2.model.csv in place: restore it from the Actions cache keyed on
-  the sha256 pinned in src/digest42/fetch_model.py, or download it with that
+  the sha256 pinned in src/ds42/fetch_model.py, or download it with that
   script, then verify what we ended up with.
 
 outputs:
   sha256-pinned:
-    description: The sha256 pinned in src/digest42/fetch_model.py.
+    description: The sha256 pinned in src/ds42/fetch_model.py.
     value: ${{ steps.pin.outputs.sha256 }}
   sha256-actual:
     description: The sha256 of the file that is now in data/.
@@ -25,9 +25,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sha="$(grep -oE '[0-9a-f]{64}' src/digest42/fetch_model.py | head -n1)"
+        sha="$(grep -oE '[0-9a-f]{64}' src/ds42/fetch_model.py | head -n1)"
         if [ -z "$sha" ]; then
-          echo "::error file=src/digest42/fetch_model.py::no pinned sha256 found"
+          echo "::error file=src/ds42/fetch_model.py::no pinned sha256 found"
           exit 1
         fi
         echo "sha256=$sha" >> "$GITHUB_OUTPUT"
@@ -45,7 +45,7 @@ runs:
     - name: Fetch the model (cache miss)
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
-      run: python src/digest42/fetch_model.py
+      run: python src/ds42/fetch_model.py
 
     - name: Verify the model
       id: verify
@@ -63,7 +63,7 @@ runs:
           echo "$f: $(wc -c <"$f") bytes, sha256 $sha (matches the pin)"
         else
           echo "matches=false" >> "$GITHUB_OUTPUT"
-          echo "::warning file=src/digest42/fetch_model.py::digest2 model sha256 is $sha but KNOWN_SHA256 pins ${{ steps.pin.outputs.sha256 }} - the MPC probably refreshed the model; the format check still passed. Update the pin (and expect population-model test numbers to move)."
+          echo "::warning file=src/ds42/fetch_model.py::digest2 model sha256 is $sha but KNOWN_SHA256 pins ${{ steps.pin.outputs.sha256 }} - the MPC probably refreshed the model; the format check still passed. Update the pin (and expect population-model test numbers to move)."
         fi
 
     # Only cache a file that matches the pin, so the key never names content it

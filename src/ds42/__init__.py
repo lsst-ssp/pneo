@@ -1,4 +1,4 @@
-"""digest42 — Bayesian NEO tracklet classification by systematic ranging."""
+"""ds42 — Bayesian NEO tracklet classification by systematic ranging."""
 
 from .attributable import Attributable, observer_state
 from .classifier import ClassificationResult, classify, classify_many
@@ -21,6 +21,6 @@ __all__ = [
 try:  # single source of truth: installed metadata (setuptools-scm derived)
     from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
-    __version__ = _pkg_version("digest42")
+    __version__ = _pkg_version("ds42")
 except PackageNotFoundError:  # running from an uninstalled source tree
     __version__ = "0.0.0+uninstalled"

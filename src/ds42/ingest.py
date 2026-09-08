@@ -2,9 +2,9 @@
 
 This module turns the two observation formats a digest2 user already has on
 disk — **ADES PSV** and **MPC 80-column** — into the
-:class:`~digest42.attributable.Attributable` values
-:func:`digest42.classify` consumes.  It is the ingestion half of the
-``digest42`` command-line tool (:mod:`digest42.cli`) and is a supported public
+:class:`~ds42.attributable.Attributable` values
+:func:`ds42.classify` consumes.  It is the ingestion half of the
+``ds42`` command-line tool (:mod:`ds42.cli`) and is a supported public
 API in its own right.
 
 Provenance
@@ -17,7 +17,7 @@ NEOCP discovery tracklets: the band -> V table (cross-checked against digest2
 objects), the night clustering, the least-squares attributable fit, and the
 MPC-parallax-constants -> WGS84 obscode resolution.  The pilot is a repo-only
 validation harness, so the code is **copied, not imported**: an installed
-``digest42`` wheel carries no ``validation/`` package.
+``ds42`` wheel carries no ``validation/`` package.
 ``tests/test_ingest.py`` pins the copy against the pilot's own stored output
 (``validation/output/neocp_pilot/tracklets.json``) where that file is present.
 
@@ -46,18 +46,18 @@ stated here so nobody has to discover them from a diff:
 
 * **A blank band is read as V, not as "unknown"** [D-20].  digest2's own
   80-column reader gives a blank band its -0.8 unknown-band fallback (its ADES
-  reader substitutes V), so digest42's V is 0.80 mag brighter on such a record.
+  reader substitutes V), so ds42's V is 0.80 mag brighter on such a record.
   See :func:`normalize_band` for the argument; :func:`parse_mpc80` warns once
   per file whenever it happens, and the CLI repeats the count on stderr.
 * **A wider set of observation types is accepted.**  digest2 keeps only
-  note-2 ``C``/``S``/``B``; digest42 keeps everything *except* the record types
+  note-2 ``C``/``S``/``B``; ds42 keeps everything *except* the record types
   whose columns do not hold optical RA/Dec at all (see
   :data:`_MPC80_SKIP_NOTE2`) — photographic, transit, encoder, video and
   occultation records are therefore scored here and skipped there.  Their
   astrometry is real, if less precise; the attributable fit's
   ``resid_rms_arcsec`` is the honest per-tracklet quality flag for them.
 5. **Observatory** (:class:`ObscodeTable`).  The built-in table
-   (:data:`digest42.attributable.MPC_OBSCODES`) first, then a *local* copy of
+   (:data:`ds42.attributable.MPC_OBSCODES`) first, then a *local* copy of
    the MPC "List Of Observatory Codes" page if one is configured or found, then
    a geocentric fallback with a warning.  **Nothing here touches the network**:
    an obscode lookup must not be able to stall or fail a scoring run.
@@ -123,7 +123,7 @@ __all__ = [
 
 #: Band -> Johnson V offsets.  **Verbatim** from digest2 2.8.2's own table,
 #: ``digest2/observation.py:_BAND_CORRECTIONS`` ("same as common.c
-#: updateMagnitude"), so digest42 and digest2 standardise photometry
+#: updateMagnitude"), so ds42 and digest2 standardise photometry
 #: identically **for every band that is actually named** — see
 #: :func:`normalize_band` for the one deliberate divergence, a *blank* band in
 #: an MPC 80-column record [D-20].  digest2 applies the offset only when the
@@ -208,15 +208,15 @@ def normalize_band(band: str | None) -> str:
        parsers: its ADES reader substitutes ``"V"``
        (``row.get("band", "V") or "V"``, offset 0.0), while its MPC 80-column
        reader hands the raw blank straight to the offset table, where it misses
-       and takes the **-0.8 "unknown band" fallback**.  digest42 applies the
+       and takes the **-0.8 "unknown band" fallback**.  ds42 applies the
        ADES rule on **both** paths, so on a blank-band 80-column record
-       digest42's V is **0.80 mag brighter** than digest2's.
+       ds42's V is **0.80 mag brighter** than digest2's.
 
        This is a choice, not an oversight.  A blank band in pre-ADES astrometry
        overwhelmingly means an unfiltered or V-ish visual/CCD magnitude; -0.8 is
        digest2's crudest fallback, applied there only as an artifact of which
        parser ran.  Treating the two formats differently would also make
-       digest42's answer depend on the file format rather than the observation.
+       ds42's answer depend on the file format rather than the observation.
        :func:`parse_mpc80` counts these records and warns once per file, so the
        divergence is never silent.
     """
@@ -237,7 +237,7 @@ def band_to_v(band: str | None, mag: float) -> float:
     through untouched, which is digest2's "no photometry" sentinel.  The band
     goes through :func:`normalize_band` first — see :data:`MPC_BAND_ALIASES`
     for why that step is not optional on real MPC output, and
-    :func:`normalize_band`'s warning for the one place digest42 deliberately
+    :func:`normalize_band`'s warning for the one place ds42 deliberately
     does **not** reproduce digest2 (a blank band in an 80-column record).
 
     So: the offset *table* is digest2's, entry for entry, and every non-blank
@@ -261,7 +261,7 @@ _OBSCODE_RE = re.compile(
 )
 
 #: Environment variable naming a local MPC obscode table.
-OBSCODE_ENV_VAR = "DIGEST42_OBSCODES"
+OBSCODE_ENV_VAR = "DS42_OBSCODES"
 
 #: Relative paths searched (in order) for a local MPC obscode table when
 #: neither ``--obscodes`` nor :data:`OBSCODE_ENV_VAR` is given.  The MPC
@@ -281,7 +281,7 @@ def parse_obscodes(path: str) -> dict[str, dict]:
     Returns ``{code: {"lon_deg", "rho_cos_phi", "rho_sin_phi", "name"}}`` for
     every code that publishes parallax constants.  Space-based and roving codes
     (Gaia, TESS, "Roving Observer", ...) leave those columns blank and are
-    **omitted**: they define no fixed ITRS site, and digest42's observer model
+    **omitted**: they define no fixed ITRS site, and ds42's observer model
     has no spacecraft ephemeris.
     """
     with open(path, "rb") as fh:
@@ -325,7 +325,7 @@ def parse_obscodes(path: str) -> dict[str, dict]:
 URL_OBSCODES = "https://www.minorplanetcenter.net/iau/lists/ObsCodesF.html"
 
 #: Where :func:`fetch_obscodes` writes by default — the first entry of
-#: :data:`OBSCODE_SEARCH_PATH`, so a fetch and a subsequent ``digest42 score``
+#: :data:`OBSCODE_SEARCH_PATH`, so a fetch and a subsequent ``ds42 score``
 #: with no flags line up.
 DEFAULT_OBSCODES_DEST = os.path.join("data", "ObsCodesF.html")
 
@@ -336,7 +336,7 @@ def fetch_obscodes(dest: str = DEFAULT_OBSCODES_DEST, timeout: float = 120.0
 
     **This is the only function in this module that touches the network, and
     nothing in the ingestion path calls it.**  It exists so that fetching the
-    table is an explicit, dated act by the user (``digest42 fetch-obscodes``)
+    table is an explicit, dated act by the user (``ds42 fetch-obscodes``)
     rather than something a scoring run can be surprised by; see
     :class:`ObscodeTable` for why an obscode lookup must never be able to stall
     or fail a run.
@@ -356,7 +356,7 @@ def fetch_obscodes(dest: str = DEFAULT_OBSCODES_DEST, timeout: float = 120.0
 
     from . import __version__
 
-    agent = f"digest42/{__version__} (+https://github.com/mjuric/digest42)"
+    agent = f"ds42/{__version__} (+https://github.com/mjuric/ds42)"
     req = urllib.request.Request(URL_OBSCODES, headers={"User-Agent": agent})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -397,7 +397,7 @@ def obscode_geodetic(row: dict) -> tuple[float, float, float]:
     ``y = rho cos(phi') sin(lon)``, ``z = rho sin(phi')``.  Those define an
     ITRS position with no ellipsoid involved, so we build the position and let
     astropy invert it to geodetic — which is what
-    :func:`digest42.attributable.observatory_location` consumes for any code
+    :func:`ds42.attributable.observatory_location` consumes for any code
     outside its built-in table.  The round trip is exact to sub-millimetre;
     ``tests/test_ingest.py`` checks it against every entry of that built-in
     table.
@@ -424,16 +424,16 @@ class ObscodeTable:
 
     ``"geocenter"``
         the code denotes the geocentre (:data:`
-        digest42.attributable.GEOCENTER_OBSCODES`, i.e. ``"500"``) — no
+        ds42.attributable.GEOCENTER_OBSCODES`, i.e. ``"500"``) — no
         topocentric offset.
     ``"builtin"``
-        :data:`digest42.attributable.MPC_OBSCODES`, the package's own small
+        :data:`ds42.attributable.MPC_OBSCODES`, the package's own small
         table of parallax constants, converted by :func:`obscode_geodetic`.
         Preferred over any file so that a stale or truncated local copy cannot
-        move a site digest42 already knows.
+        move a site ds42 already knows.
     ``"file"``
         a local copy of the MPC "List Of Observatory Codes" page: the ``path``
-        argument, else ``$DIGEST42_OBSCODES``, else the first entry of
+        argument, else ``$DS42_OBSCODES``, else the first entry of
         :data:`OBSCODE_SEARCH_PATH` that exists *and* yields codes.  Loaded
         lazily, once.  ``path`` suppresses the search entirely, so an explicit
         table that cannot be read is reported through :attr:`load_error`
@@ -450,7 +450,7 @@ class ObscodeTable:
 
     **The network is never touched.**  Downloading an obscode table in the
     middle of a scoring run would make results depend on connectivity; use
-    ``digest42 score --obscodes PATH`` (or the environment variable) to point
+    ``ds42 score --obscodes PATH`` (or the environment variable) to point
     at a copy fetched deliberately, out of band.
     """
 
@@ -541,7 +541,7 @@ class ObscodeTable:
             out = (0.0, 0.0, 0.0, "geocenter" if key else "fallback")
             if not key:
                 self._warn(
-                    "digest42.ingest: a tracklet carries no observatory code; "
+                    "ds42.ingest: a tracklet carries no observatory code; "
                     "scoring it at the geocentre. Check the 'stn' column "
                     "(ADES) or columns 78-80 (MPC 80-column).",
                     "",
@@ -565,7 +565,7 @@ class ObscodeTable:
                 )
                 self._warn_fallback(
                     code,
-                    f"is not in digest42's built-in table {where}; scoring it "
+                    f"is not in ds42's built-in table {where}; scoring it "
                     "GEOCENTRICALLY, which displaces the observer by up to one "
                     "Earth radius (4.3e-5 AU)",
                 )
@@ -579,7 +579,7 @@ class ObscodeTable:
 
     def _warn_fallback(self, code: str, why: str) -> None:
         self._warn(
-            f"digest42.ingest: observatory code {code!r} {why}. Pass "
+            f"ds42.ingest: observatory code {code!r} {why}. Pass "
             f"--obscodes PATH (or set {OBSCODE_ENV_VAR}) to a local copy of "
             "the MPC 'List Of Observatory Codes' page.",
             code,
@@ -661,14 +661,14 @@ class Tracklet:
 
         Keyed on :attr:`obscode_source`, **not** on the coordinates: a
         geocentric tracklet carries ``lon_deg = lat_deg = height_m = 0``, and
-        feeding those to :func:`digest42.attributable.observer_state` as a
+        feeding those to :func:`ds42.attributable.observer_state` as a
         *geodetic site* would place the observer on the equator at Greenwich —
         one Earth radius (4.3e-5 AU) from where it belongs.
         """
         return self.obscode_source in ("geocenter", "fallback")
 
     def observer_kwargs(self) -> dict:
-        """Observer arguments for :func:`digest42.classify` / ``observer_state``.
+        """Observer arguments for :func:`ds42.classify` / ``observer_state``.
 
         ``{}`` (i.e. the geocentre) for a geocentric tracklet, otherwise the
         resolved geodetic site.  Use this rather than reading ``lon_deg`` &c.
@@ -692,7 +692,7 @@ class Tracklet:
         )[:23]
 
     def attributable(self) -> Attributable:
-        """This tracklet as an :class:`~digest42.attributable.Attributable`."""
+        """This tracklet as an :class:`~ds42.attributable.Attributable`."""
         from astropy.time import Time
 
         return Attributable(
@@ -709,7 +709,7 @@ class Tracklet:
 class IngestFailure:
     """One object that could not become a tracklet.
 
-    ``status`` is a short machine-readable token — the value the ``digest42
+    ``status`` is a short machine-readable token — the value the ``ds42
     score`` status column carries for this row — and ``message`` is the
     human-readable reason.  The vocabulary:
 
@@ -1035,7 +1035,7 @@ def parse_ades_psv(
 
 #: Note-2 (column 15) codes whose records this parser skips, with the reason:
 #:
-#: * ``S``/``s`` — the two halves of a **space-based** observation.  digest42's
+#: * ``S``/``s`` — the two halves of a **space-based** observation.  ds42's
 #:   observer model has no spacecraft ephemeris (this is also why the NEOCP
 #:   pilot excluded C51/258), and the ``s`` line is not astrometry at all: it
 #:   carries the satellite's geocentric position in the RA/Dec columns.
@@ -1162,10 +1162,10 @@ def parse_mpc80(
         )
     if n_blank_band:
         warnings.warn(
-            f"digest42.ingest: {path}: {n_blank_band} MPC 80-column record(s) "
-            "carry a magnitude with a BLANK band; digest42 converts these as V "
+            f"ds42.ingest: {path}: {n_blank_band} MPC 80-column record(s) "
+            "carry a magnitude with a BLANK band; ds42 converts these as V "
             "(offset 0.0), whereas digest2's own 80-column reader applies its "
-            "-0.8 unknown-band fallback, so digest42's V is 0.80 mag brighter "
+            "-0.8 unknown-band fallback, so ds42's V is 0.80 mag brighter "
             "on those records. This is a deliberate choice [D-20], not a bug: "
             "a blank band in pre-ADES astrometry is an unfiltered/visual "
             "magnitude, and -0.8 is digest2's crudest fallback applied there "

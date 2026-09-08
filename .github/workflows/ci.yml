@@ -3,16 +3,16 @@ name: CI
 # Two things are tested, in parallel jobs:
 #
 #   * `pytest` on the stock install -- no Rust extension present, so
-#     `digest42.classifier` runs its numpy reference implementation.  This is
-#     what `pip install digest42` gives a user, and it is the configuration in
+#     `ds42.classifier` runs its numpy reference implementation.  This is
+#     what `pip install ds42` gives a user, and it is the configuration in
 #     which `backend="auto"` must degrade to "python" rather than fail.
 #   * `cargo test` plus `pytest` with the extension built, where
-#     `DIGEST42_BACKEND=rust` routes every classify call through the kernel and
+#     `DS42_BACKEND=rust` routes every classify call through the kernel and
 #     tests/test_backend_parity.py cross-checks the two implementations against
 #     each other (that file clears the env var itself and drives both backends
 #     explicitly, so it is a real A/B even inside the rust job).
 #
-# `DIGEST42_BACKEND=auto` is not run as a third mode: with the extension built
+# `DS42_BACKEND=auto` is not run as a third mode: with the extension built
 # it resolves to "rust" and with it absent to "python", so the two jobs below
 # already cover both of its outcomes.
 
@@ -62,7 +62,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install digest42 (editable, dev extras)
+      - name: Install ds42 (editable, dev extras)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
@@ -81,8 +81,8 @@ jobs:
         run: |
           python - <<'PY'
           import sys, numpy, astropy, matplotlib
-          from digest42.attributable import ephemeris_in_use
-          from digest42.backend import core_available, resolve_backend
+          from ds42.attributable import ephemeris_in_use
+          from ds42.backend import core_available, resolve_backend
           print(sys.version)
           for m in (numpy, astropy, matplotlib):
               print(f"{m.__name__:12s} {m.__version__}")
@@ -90,16 +90,16 @@ jobs:
           print("core_available", core_available())
           # The whole point of this job: no extension, and the classifier says
           # so rather than falling over.
-          assert not core_available(), "a digest42._core extension is present in the no-extension job"
+          assert not core_available(), "a ds42._core extension is present in the no-extension job"
           assert resolve_backend("auto") == "python"
-          assert resolve_backend() == "python"   # DIGEST42_BACKEND=python
+          assert resolve_backend() == "python"   # DS42_BACKEND=python
           PY
         env:
-          DIGEST42_BACKEND: python
+          DS42_BACKEND: python
 
-      - name: pytest (DIGEST42_BACKEND=python)
+      - name: pytest (DS42_BACKEND=python)
         env:
-          DIGEST42_BACKEND: python
+          DS42_BACKEND: python
         run: python -m pytest -q -rs --durations=15 --color=yes
 
   # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ jobs:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
       # Deliberately NOT setting CARGO_TARGET_DIR: rust/build.sh looks for the
-      # library at rust/target/<profile>/libdigest42_core.so, i.e. cargo's
+      # library at rust/target/<profile>/libds42_core.so, i.e. cargo's
       # default location for that manifest.
     steps:
       - uses: actions/checkout@v7
@@ -156,7 +156,7 @@ jobs:
             cargo-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-
             cargo-${{ runner.os }}-
 
-      - name: Install digest42 (editable, dev extras)
+      - name: Install ds42 (editable, dev extras)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
@@ -169,8 +169,8 @@ jobs:
         uses: ./.github/actions/digest2-model
 
       # Read-only use of rust/: build.sh does `cargo build --release` and
-      # installs rust/target/release/libdigest42_core.so as
-      # src/digest42/_core.abi3.so, which is the import location of the
+      # installs rust/target/release/libds42_core.so as
+      # src/ds42/_core.abi3.so, which is the import location of the
       # editable install.  It ends by importing the module, so a broken build
       # or a wrong path fails here.  Invoked as `bash rust/build.sh` rather than
       # `rust/build.sh` so the step does not depend on the executable bit
@@ -184,13 +184,13 @@ jobs:
 
       - name: Report the environment
         env:
-          DIGEST42_BACKEND: rust
+          DS42_BACKEND: rust
         run: |
           python - <<'PY'
           import sys, numpy, astropy, matplotlib
-          import digest42._core as core
-          from digest42.attributable import ephemeris_in_use
-          from digest42.backend import core_available, resolve_backend
+          import ds42._core as core
+          from ds42.attributable import ephemeris_in_use
+          from ds42.backend import core_available, resolve_backend
           print(sys.version)
           for m in (numpy, astropy, matplotlib):
               print(f"{m.__name__:12s} {m.__version__}")
@@ -198,14 +198,14 @@ jobs:
           print("core        ", core.__version__, "COND_MAX =", core.COND_MAX)
           # Guard against a silent fallback: if this job ran the reference
           # implementation it would pass while testing nothing new.
-          assert core_available(), "digest42._core did not import"
+          assert core_available(), "ds42._core did not import"
           assert resolve_backend() == "rust"
           assert resolve_backend("auto") == "rust"
           PY
 
-      - name: pytest (DIGEST42_BACKEND=rust)
+      - name: pytest (DS42_BACKEND=rust)
         env:
-          DIGEST42_BACKEND: rust
+          DS42_BACKEND: rust
         run: python -m pytest -q -rs --durations=15 --color=yes
 
   # ---------------------------------------------------------------------------

@@ -1,16 +1,16 @@
 """Backend selection and the Rust-kernel glue.
 
-digest42 ships two implementations of the WP5 marginal-likelihood integral:
+ds42 ships two implementations of the WP5 marginal-likelihood integral:
 
 ``"python"``
-    :func:`digest42.classifier.classify`'s own vectorized numpy pipeline.  It is
+    :func:`ds42.classifier.classify`'s own vectorized numpy pipeline.  It is
     the **reference**: every convention (bin edges, NaN/unbound masking, the
     D-14 clamp, the quadrature measure) is defined by what it does, and the
-    6x6 Jacobian chain in :mod:`digest42.transforms` is built and inverted
+    6x6 Jacobian chain in :mod:`ds42.transforms` is built and inverted
     numerically there.
 
 ``"rust"``
-    The fused kernel in the ``digest42._core`` extension module (see
+    The fused kernel in the ``ds42._core`` extension module (see
     ``rust/``).  It crosses the Python/Rust boundary once per tracklet (or once
     per batch), generates the ranging grid internally, and evaluates the
     composed Jacobian determinant in the exact Delaunay closed form
@@ -27,18 +27,18 @@ Selection
 ---------
 ``backend="auto"`` (the default everywhere) uses ``"rust"`` when the extension
 imports and ``"python"`` otherwise.  The environment variable
-``DIGEST42_BACKEND=python`` or ``=rust`` overrides the argument, so a whole run
+``DS42_BACKEND=python`` or ``=rust`` overrides the argument, so a whole run
 can be pinned to one backend without touching call sites::
 
-    DIGEST42_BACKEND=python pytest tests/
+    DS42_BACKEND=python pytest tests/
 
-``DIGEST42_BACKEND=auto`` means "no preference" and does **not** override
+``DS42_BACKEND=auto`` means "no preference" and does **not** override
 anything: a global ``auto`` must not quietly promote an explicit
 ``backend="python"`` call site back onto the kernel.  Only the two concrete
 names override.  Case and surrounding whitespace are ignored; any other value
 is an error.
 
-Even when it does override, ``DIGEST42_BACKEND`` is a *preference*, not an
+Even when it does override, ``DS42_BACKEND`` is a *preference*, not an
 assertion: where the kernel cannot be used (see below) the Python reference
 still runs.  Only an explicit ``backend="rust"`` argument turns that situation
 into an error.
@@ -46,7 +46,7 @@ into an error.
 Limitations of the Rust backend (it falls back to Python unless
 ``backend="rust"`` was passed explicitly):
 
-* both components must be :class:`digest42.population.Digest2Histogram`-shaped,
+* both components must be :class:`ds42.population.Digest2Histogram`-shaped,
   i.e. expose a 4-D ``(q, e, i, H)`` density table on the same bin edges.  A
   component in the smooth-in-H mode must additionally expose the matching
   ``h_coeffs``; the kernel evaluates the very same Horner form on the very same
@@ -76,7 +76,7 @@ Sigma points (``att.sigma_points`` / ``att.sigma_weights``, a ``(K, 5)`` matrix
 of ``(ra, dec, ra_rate, dec_rate, v_mag)`` variants and ``(K,)`` weights) are
 implemented **only** by the kernel, which accumulates
 ``Lambda_C = sum_k w_k Lambda_C^(k)`` with a separate admissible region and grid
-per variant.  :func:`digest42.classifier.classify` refuses them on the Python
+per variant.  :func:`ds42.classifier.classify` refuses them on the Python
 path instead of silently scoring the central attributable; see
 :func:`sigma_point_count`.
 """
@@ -118,7 +118,7 @@ _core_error: str | None = None
 
 
 def _load_core():
-    """Import ``digest42._core`` once; remember the failure if it is absent."""
+    """Import ``ds42._core`` once; remember the failure if it is absent."""
     global _core, _core_error
     if _core is not None or _core_error is not None:
         return _core
@@ -132,7 +132,7 @@ def _load_core():
 
 
 def core_available() -> bool:
-    """Whether the compiled ``digest42._core`` kernel can be imported."""
+    """Whether the compiled ``ds42._core`` kernel can be imported."""
     return _load_core() is not None
 
 
@@ -140,16 +140,16 @@ def strict_rust(backend: str | None = None) -> bool:
     """Whether an unsupported model must raise rather than fall back.
 
     Only an explicit ``backend="rust"`` *argument* is strict.  A
-    ``DIGEST42_BACKEND=rust`` environment variable is a global preference — it
+    ``DS42_BACKEND=rust`` environment variable is a global preference — it
     is meant to flip a whole test run or script onto the kernel, and must not
-    turn a perfectly valid custom :class:`~digest42.population.PopulationDensity`
+    turn a perfectly valid custom :class:`~ds42.population.PopulationDensity`
     into an error.
     """
     return backend is not None and str(backend).strip().lower() == "rust"
 
 
 def requested_backend(backend: str | None = None) -> str:
-    """The effective *request* — the argument, or ``DIGEST42_BACKEND`` if set.
+    """The effective *request* — the argument, or ``DS42_BACKEND`` if set.
 
     The argument is validated even when the environment overrides it: a typo in
     a call site must not be hidden by whatever the environment happens to say.
@@ -162,14 +162,14 @@ def requested_backend(backend: str | None = None) -> str:
             )
     else:
         arg = "auto"
-    env = os.environ.get("DIGEST42_BACKEND", "").strip().lower()
+    env = os.environ.get("DS42_BACKEND", "").strip().lower()
     if env:
         if env not in BACKENDS:
             raise ValueError(
-                f"DIGEST42_BACKEND={env!r} is not one of {BACKENDS}"
+                f"DS42_BACKEND={env!r} is not one of {BACKENDS}"
             )
         # "auto" in the environment means "no preference", not "override the
-        # call site with auto": a global DIGEST42_BACKEND=auto must not quietly
+        # call site with auto": a global DS42_BACKEND=auto must not quietly
         # promote an explicit backend="python" back to the kernel.  Only the two
         # concrete names override.  Whitespace and case are already normalized
         # above, so "  Auto  " behaves the same way.
@@ -181,7 +181,7 @@ def requested_backend(backend: str | None = None) -> str:
 def resolve_backend(backend: str | None = None) -> str:
     """Map ``"auto"``/``None``/``"python"``/``"rust"`` onto a concrete backend.
 
-    ``DIGEST42_BACKEND`` wins over the argument when it names a concrete
+    ``DS42_BACKEND`` wins over the argument when it names a concrete
     backend (``python``/``rust``); ``auto``, empty and unset all mean "no
     preference" and leave the argument alone.  ``"rust"`` requested explicitly
     but unavailable is an error, not a silent downgrade.
@@ -191,7 +191,7 @@ def resolve_backend(backend: str | None = None) -> str:
         return "rust" if core_available() else "python"
     if backend == "rust" and not core_available():
         raise RuntimeError(
-            "backend='rust' requested but the digest42._core extension is not "
+            "backend='rust' requested but the ds42._core extension is not "
             f"importable ({_core_error}). Build it with rust/build.sh."
         )
     return backend
@@ -295,14 +295,14 @@ def check_component_pair(neo, other) -> None:
     .. warning::
        ``backend="python"`` on a hand-built mismatched pair is **not** guarded
        by this function, because the reference path in
-       :mod:`digest42.classifier` never funnels the component pair through this
+       :mod:`ds42.classifier` never funnels the component pair through this
        module — it calls ``neo.density(...)`` and ``other.density(...)``
        directly.  Closing that hole needs one call to this function in
        ``classifier.classify`` / ``classify_many``; it is recorded here rather
        than worked around, because a guard that fires on one backend and not
        the other would be worse than one whose scope is written down.
-       :meth:`~digest42.population.Digest2Histogram.neo_other_pair` and
-       :meth:`~digest42.population.Digest2Histogram.from_classes` cannot
+       :meth:`~ds42.population.Digest2Histogram.neo_other_pair` and
+       :meth:`~ds42.population.Digest2Histogram.from_classes` cannot
        produce a mismatched pair, so this is reachable only by pairing two
        separately constructed components by hand.
     """
@@ -432,7 +432,7 @@ def _fingerprint(density) -> tuple:
     A component that has no ``_density_table`` (so the table is rebuilt from
     ``counts``/``bin_volume`` on every call) gets a fresh buffer address each
     time and therefore never hits the cache.  That is correct, just not fast;
-    the shipped :class:`~digest42.population.Digest2Histogram` owns its table.
+    the shipped :class:`~ds42.population.Digest2Histogram` owns its table.
     """
     tab = np.asarray(getattr(density, "_density_table", None)
                      if getattr(density, "_density_table", None) is not None
@@ -516,7 +516,7 @@ def core_model_for(neo, other):
     """
     core = _load_core()
     if core is None:  # pragma: no cover - guarded by resolve_backend
-        raise RuntimeError("digest42._core is not available")
+        raise RuntimeError("ds42._core is not available")
 
     # Before the cache, so a mismatched pair can never be memoized: this is a
     # ValueError (the caller made a modelling error) and NOT ModelNotSupported,
@@ -617,7 +617,7 @@ def rho_axis(
     """The rho quadrature nodes and their LINEAR cell widths.
 
     **This must stay identical to the rho half of**
-    :func:`digest42.ranging.build_grid`, and it is the *only* place the Rust
+    :func:`ds42.ranging.build_grid`, and it is the *only* place the Rust
     backend gets its rho axis from: the kernel no longer generates it.
 
     Why the axis crosses the boundary instead of being regenerated in Rust.
@@ -695,7 +695,7 @@ def sigma_point_count(att) -> int:
 
     Single source of truth for "does this tracklet carry sigma points", used by
     both backends.  The Python reference cannot marginalize over them [D-6], so
-    :func:`digest42.classifier.classify` raises rather than let one backend
+    :func:`ds42.classifier.classify` raises rather than let one backend
     honour them while the other silently scores the central value.
     """
     pts = getattr(att, "sigma_points", None)
@@ -763,7 +763,7 @@ def _result_from_core(
     """Assemble a :class:`ClassificationResult` from the kernel's output dict.
 
     Warning text, posterior conventions and the empty-region contract are taken
-    from :mod:`digest42.classifier` itself, so the two backends cannot drift
+    from :mod:`ds42.classifier` itself, so the two backends cannot drift
     apart on them.
     """
     from .classifier import ClassificationResult, _posterior, _warn_status
@@ -772,7 +772,7 @@ def _result_from_core(
     n_nodes = int(out["n_nodes"])
     if n_nodes == 0:
         warnings.warn(
-            "digest42.classify: empty admissible region "
+            "ds42.classify: empty admissible region "
             f"(rho in [{rho_min:g}, {rho_max:g}] AU); P(NEO) is undefined.",
             RuntimeWarning,
             stacklevel=stacklevel,
@@ -873,7 +873,7 @@ def _result_from_core(
 
 
 # ---------------------------------------------------------------------------
-# Entry points used by digest42.classifier
+# Entry points used by ds42.classifier
 # ---------------------------------------------------------------------------
 
 

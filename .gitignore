@@ -11,4 +11,4 @@ validation/output/
 
 # Rust core kernel build products (rust/build.sh rebuilds both)
 rust/target/
-src/digest42/_core*.so
+src/ds42/_core*.so

@@ -1,5 +1,5 @@
 //! Physical constants and convention switches, mirrored from
-//! `src/digest42/constants.py` and `src/digest42/transforms.py`.
+//! `src/ds42/constants.py` and `src/ds42/transforms.py`.
 //!
 //! Every value here is a *copy* of the Python single source of truth, not a
 //! re-derivation: the two backends must agree bit-for-bit on conventions.

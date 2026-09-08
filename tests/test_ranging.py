@@ -2,7 +2,7 @@
 
 Everything here is checked against *independent* brute-force machinery: the
 energy condition is re-implemented from its definition (no reuse of the
-quadratic algebra in ``digest42.ranging``), and the reference integrals are
+quadratic algebra in ``ds42.ranging``), and the reference integrals are
 computed on uniform (rho, rho_dot) grids so that the log-spacing measure in
 ``build_grid`` is genuinely under test.
 
@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 from astropy.time import Time
 
-from digest42.attributable import Attributable
-from digest42.constants import MU_SUN
-from digest42.ranging import RangingGrid, admissible_rhodot_interval, build_grid
+from ds42.attributable import Attributable
+from ds42.constants import MU_SUN
+from ds42.ranging import RangingGrid, admissible_rhodot_interval, build_grid
 
 EPOCH = Time(60000.0, format="mjd", scale="tdb")
 

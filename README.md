@@ -1,6 +1,6 @@
-# digest42
+# ds42
 
-[![CI](https://github.com/mjuric/digest42/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mjuric/digest42/actions/workflows/ci.yml)
+[![CI](https://github.com/mjuric/ds42/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mjuric/ds42/actions/workflows/ci.yml)
 
 A principled Bayesian classifier for asteroid tracklets: given a single tracklet — sky
 position, rates of motion, and apparent magnitude — compute a calibrated posterior
@@ -11,7 +11,7 @@ answer to digest2.
 **Method in one paragraph.** A tracklet determines an attributable
 A = (α, δ, α̇, δ̇) and an apparent magnitude V, leaving exactly two unknowns: topocentric
 range ρ and range-rate ρ̇. For each hypothesized (ρ, ρ̇) the full heliocentric orbit — and,
-through the distance, the absolute magnitude H — is determined. digest42 marginalizes over
+through the distance, the absolute magnitude H — is determined. ds42 marginalizes over
 the admissible region in (ρ, ρ̇), evaluating absolutely calibrated population densities
 n_C(elements, H) for an NEO component and an everything-else component, with the proper
 change-of-measure Jacobian between element space and observable space. The posterior
@@ -34,7 +34,7 @@ predicted/observed NEO count 1.01 vs digest2's 1.38
 
 ```python
 from astropy.time import Time
-from digest42 import Attributable, Digest2Histogram, classify
+from ds42 import Attributable, Digest2Histogram, classify
 
 neo, other = Digest2Histogram.neo_other_pair("data/digest2.model.csv")  # scripts/fetch_digest2_model.py
 att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,     # rad, rad/day
@@ -47,13 +47,13 @@ res.plot_posterior_map()   # (rho, rho_dot) diagnostic
 ## Installation
 
 ```bash
-pip install digest42            # wheels: linux x86_64, macOS arm64, Windows x64 (CPython >= 3.11)
-digest42 fetch-model            # the MPC digest2 population model (~4 MB) -> ./data/
-digest42 fetch-obscodes         # the MPC observatory-code table -> ./data/
+pip install ds42            # wheels: linux x86_64, macOS arm64, Windows x64 (CPython >= 3.11)
+ds42 fetch-model            # the MPC digest2 population model (~4 MB) -> ./data/
+ds42 fetch-obscodes         # the MPC observatory-code table -> ./data/
 ```
 
 Wheels ship the Rust-accelerated kernel (`backend="auto"` uses it automatically). On
-platforms without a wheel, `pip install digest42` builds from the sdist as a pure-Python
+platforms without a wheel, `pip install ds42` builds from the sdist as a pure-Python
 package — same results via the numpy reference implementation, ~40× slower; build the
 extension later with `rust/build.sh` (needs cargo). From a source checkout:
 `pip install -e ".[dev]" && python scripts/fetch_digest2_model.py`. See
@@ -61,13 +61,13 @@ extension later with `rust/build.sh` (needs cargo). From a source checkout:
 
 ## Command line
 
-`digest42 score` is the drop-in place to start if you already run digest2 on an
+`ds42 score` is the drop-in place to start if you already run digest2 on an
 observation file. It ingests **ADES PSV** or **MPC 80-column** astrometry
 (auto-detected from content), fits one attributable per object, and writes one row
 per tracklet:
 
 ```console
-$ digest42 score neocp.psv
+$ ds42 score neocp.psv
 object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
 T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
 T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      fully_truncated_flagged
@@ -87,9 +87,9 @@ calibration statistic must use `status == ok` only.
 Photometry uses digest2's own band→V offset table, entry for entry, with **one
 deliberate divergence** [D-20]: an MPC 80-column record carrying a magnitude but a
 *blank* band is converted as V, where digest2's 80-column reader applies its −0.8
-unknown-band fallback — so digest42 reads 0.80 mag brighter there. A blank band in
+unknown-band fallback — so ds42 reads 0.80 mag brighter there. A blank band in
 pre-ADES astrometry is an unfiltered magnitude, and −0.8 is digest2's crudest
-fallback, applied only because a different parser ran; digest42's ADES and
+fallback, applied only because a different parser ran; ds42's ADES and
 80-column paths agree with each other instead. Affected records are counted and
 reported on stderr, so the divergence is never silent.
 
@@ -102,13 +102,13 @@ to all cores and maps onto whichever backend resolves: one batched
 tracklets on the numpy reference. Ingestion and scoring degrade **per tracklet** —
 one bad object is one failure row plus a line on stderr, never a lost run (a
 batched kernel call that fails as a unit is re-scored one tracklet at a time) — and
-stdout carries nothing but data, so `digest42 score obs.psv > scores.tsv` is clean.
-`digest42 fetch-model` is the same downloader as the `digest42-fetch-model` script.
+stdout carries nothing but data, so `ds42 score obs.psv > scores.tsv` is clean.
+`ds42 fetch-model` is the same downloader as the `ds42-fetch-model` script.
 
 **Observatory codes.** Anything outside the built-in 14-code table needs the MPC
-observatory-code page; `digest42 fetch-obscodes` downloads it to
-`./data/ObsCodesF.html`, where `digest42 score` looks by default (`--obscodes PATH`
-or `$DIGEST42_OBSCODES` to point elsewhere). Scoring itself never touches the
+observatory-code page; `ds42 fetch-obscodes` downloads it to
+`./data/ObsCodesF.html`, where `ds42 score` looks by default (`--obscodes PATH`
+or `$DS42_OBSCODES` to point elsewhere). Scoring itself never touches the
 network. An unknown code falls back to the **geocentre** with a warning, and that
 is not cosmetic: scoring the pilot's 499 real tracklets with and without the table,
 106 fell back and their P(NEO) moved by up to **0.169** (F52: 0.258 → 0.427; median
@@ -122,8 +122,8 @@ scored, and `p_neo` reproduces the pilot's own D-14-clamped scores with **median
 maximum of 8.6×10⁻⁶**, which is D-19's published extended-vs-clamped agreement,
 reproduced end to end through the CLI.
 
-`digest42 score --help` is self-contained; the ingestion machinery is also a public
-API (`digest42.ingest`).
+`ds42 score --help` is self-contained; the ingestion machinery is also a public
+API (`ds42.ingest`).
 
 ## Documentation
 

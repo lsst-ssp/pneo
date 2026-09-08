@@ -1,10 +1,10 @@
-//! `digest42._core` — the fused Rust classify kernel.
+//! `ds42._core` — the fused Rust classify kernel.
 //!
 //! The Python↔Rust boundary is crossed **once per tracklet** (or once per
 //! batch), never per function: [`CoreModel`] is built once per process and
 //! [`classify_core`] / [`classify_batch`] run the whole
 //! grid → elements → photometry → density → Jacobian → accumulate pipeline
-//! inside Rust.  The Python implementation in `digest42.classifier` remains the
+//! inside Rust.  The Python implementation in `ds42.classifier` remains the
 //! reference backend; see `tests/test_backend_parity.py`.
 //!
 //! This is a public extension module, so everything crossing the boundary is
@@ -34,7 +34,7 @@ pyo3::create_exception!(
     PyValueError,
     "The population components cannot be handed to the Rust kernel.\n\n\
      Subclasses ValueError, so existing handlers keep working; \
-     `digest42.backend` maps it onto `ModelNotSupported` so that \
+     `ds42.backend` maps it onto `ModelNotSupported` so that \
      `backend=\"auto\"` falls back to the Python reference instead of failing \
      where the reference would succeed."
 );
@@ -162,12 +162,12 @@ fn hist_from_py(
 /// bin-edge arrays.  Rust owns a *copy* of everything, so the numpy arrays
 /// handed in may be freed or mutated afterwards without affecting the model.
 ///
-/// That independence is also a hazard, and it is `digest42.backend`'s job to
+/// That independence is also a hazard, and it is `ds42.backend`'s job to
 /// manage: because the copy is frozen at construction, mutating the Python
 /// component afterwards (flipping `h_top_bin_infinite`, editing a cell) leaves
 /// this handle stale.  The glue therefore keys its handle cache on a content
 /// fingerprint, not on object identity.
-#[pyclass(module = "digest42._core", frozen)]
+#[pyclass(module = "ds42._core", frozen)]
 pub struct CoreModel {
     inner: Model,
 }
@@ -672,7 +672,7 @@ fn bin_index<'py>(
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The crate carries no version (publish = false); the package version is
     // the git tag via setuptools-scm.  Report nothing rather than "0.0.0".
-    m.add("__version__", "(digest42 package version; see digest42.__version__)")?;
+    m.add("__version__", "(ds42 package version; see ds42.__version__)")?;
     m.add("COND_MAX", consts::COND_MAX)?;
     m.add("UnsupportedModel", m.py().get_type::<UnsupportedModel>())?;
     m.add_class::<CoreModel>()?;

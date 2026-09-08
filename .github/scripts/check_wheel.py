@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Assert that a built digest42 wheel is exactly what we mean to publish.
+"""Assert that a built ds42 wheel is exactly what we mean to publish.
 
 Used by .github/workflows/release.yml right after each ``maturin build``, so a
 packaging regression fails the wheel job instead of reaching PyPI.  Runs on the
-stock interpreter: standard library only, no digest42 import (the wheel is not
+stock interpreter: standard library only, no ds42 import (the wheel is not
 installed at that point, and on the linux leg it is not even built for the
 runner's Python).
 
@@ -19,10 +19,10 @@ What is checked
     * ``--plat-tag`` (e.g. ``manylinux2014_x86_64``) appears in the filename,
       so a silently-degraded platform tag (a plain ``linux_x86_64`` wheel PyPI
       would reject, or a macOS deployment target drift) is caught here;
-    * the compiled extension is present as ``digest42/_core.<abi3 suffix>``;
-    * every other member is a ``digest42/*.py`` module or a ``dist-info``
+    * the compiled extension is present as ``ds42/_core.<abi3 suffix>``;
+    * every other member is a ``ds42/*.py`` module or a ``dist-info``
       entry.  This is the check that matters: it fails on the two things this
-      layout can get wrong -- a wheel that claims the whole ``digest42``
+      layout can get wrong -- a wheel that claims the whole ``ds42``
       package but forgets the Python modules, and a wheel that ships a
       developer's leftovers (``__pycache__``, a stale ``.so``,
       ``data/digest2.model.csv``, ``tests/``, ``validation/``).
@@ -68,9 +68,9 @@ def main() -> int:
     print(f"wheel: {whl.name} ({whl.stat().st_size / 1e6:.2f} MB)")
 
     name = whl.name
-    if not name.startswith("digest42-"):
-        fail(f"{name}: not a digest42 wheel")
-    if args.version and not name.startswith(f"digest42-{args.version}-"):
+    if not name.startswith("ds42-"):
+        fail(f"{name}: not a ds42 wheel")
+    if args.version and not name.startswith(f"ds42-{args.version}-"):
         fail(f"{name}: expected version {args.version}")
     if "-cp311-abi3-" not in name:
         fail(
@@ -88,18 +88,18 @@ def main() -> int:
     ext = [
         m
         for m in members
-        if m.startswith("digest42/_core.")
+        if m.startswith("ds42/_core.")
         and m.endswith((".so", ".pyd", ".dylib"))
     ]
     if len(ext) != 1:
-        fail(f"expected exactly one digest42/_core extension module, found {ext}")
+        fail(f"expected exactly one ds42/_core extension module, found {ext}")
 
-    py = [m for m in members if m.startswith("digest42/") and m.endswith(".py")]
-    if "digest42/__init__.py" not in py:
-        fail("digest42/__init__.py is missing: the wheel carries no Python package")
+    py = [m for m in members if m.startswith("ds42/") and m.endswith(".py")]
+    if "ds42/__init__.py" not in py:
+        fail("ds42/__init__.py is missing: the wheel carries no Python package")
     for required in ("backend.py", "classifier.py", "population.py"):
-        if f"digest42/{required}" not in py:
-            fail(f"digest42/{required} is missing from the wheel")
+        if f"ds42/{required}" not in py:
+            fail(f"ds42/{required} is missing from the wheel")
 
     stray = []
     for m in members:
@@ -107,7 +107,7 @@ def main() -> int:
             continue
         if m.endswith("/"):  # directory entry
             continue
-        if m.startswith("digest42-") and ".dist-info/" in m:
+        if m.startswith("ds42-") and ".dist-info/" in m:
             continue
         stray.append(m)
     if stray:

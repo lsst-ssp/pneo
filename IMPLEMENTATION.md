@@ -1,4 +1,4 @@
-# digest42 Implementation Plan
+# ds42 Implementation Plan
 
 *Execution plan for building v0 as specified in [DESIGN.md](DESIGN.md). Work is performed
 by a team of implementation agents (Opus-class), supervised and integrated by a
@@ -26,7 +26,7 @@ Pinned up front so parallel agents cannot diverge:
 
 ```
 pyproject.toml
-src/digest42/
+src/ds42/
   __init__.py
   constants.py      units, k, μ, obliquity; single source of truth
   attributable.py   WP1
@@ -116,7 +116,7 @@ trusted — a buggy test can pass buggy code.*
 ### WP7 — digest2 head-to-head (`validation/digest2_comparison.py`)
 Implements DESIGN §4.2: emit the WP6 synthetic tracklets as two-detection observation
 pairs in a format digest2 accepts (ADES or MPC 80-col), run the pip-installed MPC digest2
-on them, compare ROC/ranking against digest42 on identical inputs. **Acceptance:** digest2
+on them, compare ROC/ranking against ds42 on identical inputs. **Acceptance:** digest2
 runs end-to-end on generated input; comparison plots + a short written summary of the
 ranking gap.
 

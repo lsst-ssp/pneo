@@ -1,6 +1,6 @@
 //! The population-model handle: flattened binned densities owned by Rust.
 //!
-//! Port of `digest42.population._bin_index`, `Digest2Histogram._h_bin` and
+//! Port of `ds42.population._bin_index`, `Digest2Histogram._h_bin` and
 //! `Digest2Histogram.density`.  The lookup semantics must be *bit-identical* to
 //! the Python ones:
 //!
@@ -293,7 +293,7 @@ mod tests {
     }
 
     /// D-19: an H axis carrying the synthetic extension bin needs no special
-    /// case here.  Built exactly as `digest42.backend` hands it over — one more
+    /// case here.  Built exactly as `ds42.backend` hands it over — one more
     /// edge, one more table entry per cell, the extension entry a bit-for-bit
     /// copy of the top bin's density — and checked for the three properties the
     /// Python side guarantees: exact continuity at the old support end, a flat

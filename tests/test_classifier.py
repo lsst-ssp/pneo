@@ -37,18 +37,18 @@ from astropy.time import Time
 
 matplotlib.use("Agg")  # headless: must be set before pyplot is imported
 
-from digest42.attributable import Attributable, observer_state
-from digest42.classifier import (
+from ds42.attributable import Attributable, observer_state
+from ds42.classifier import (
     N_RHODOT_DEFAULT,
     N_RHO_DEFAULT,
     ClassificationResult,
     classify,
     classify_many,
 )
-from digest42.constants import G_SLOPE_DEFAULT, OBLIQUITY_J2000
-from digest42.population import Digest2Histogram, PopulationDensity
-from digest42.ranging import RangingGrid, admissible_rhodot_interval, build_grid
-from digest42.transforms import (
+from ds42.constants import G_SLOPE_DEFAULT, OBLIQUITY_J2000
+from ds42.population import Digest2Histogram, PopulationDensity
+from ds42.ranging import RangingGrid, admissible_rhodot_interval, build_grid
+from ds42.transforms import (
     absolute_magnitude,
     elements_from_state,
     phase_angle,
@@ -589,7 +589,7 @@ def test_aei_parameterization_uses_the_aei_jacobian(obs):
 
 def test_jacobian_computed_once_per_parameterization(monkeypatch, obs):
     """Efficiency contract: one ranging_jacobian_det call when both are qei."""
-    import digest42.classifier as clf
+    import ds42.classifier as clf
 
     R, V = obs
     att = ecliptic_tracklet(120.0, 0.4, 20.0, R_obs=R)
@@ -702,7 +702,7 @@ def test_densities_never_see_non_finite_inputs(monkeypatch, obs):
     classifier must both keep NaN out of the density's arguments AND zero the
     node's contribution.
     """
-    import digest42.classifier as clf
+    import ds42.classifier as clf
 
     R, V = obs
     att = opposition_tracklet(1.0, 21.0, R_obs=R)
@@ -760,7 +760,7 @@ def test_non_finite_jacobian_is_masked_and_counted(monkeypatch, obs):
     the guard they would poison the sum with NaN; with it they silently vanish,
     which is why `n_masked_det` exists.
     """
-    import digest42.classifier as clf
+    import ds42.classifier as clf
 
     R, V = obs
     att = ecliptic_tracklet(120.0, 0.4, 20.0, R_obs=R)
@@ -1165,7 +1165,7 @@ def test_posterior_map_concentrates_near_the_truth(d2pair):
     of a few of the true range.  The generator's geometry is arbitrary (not
     opposition), so the phase angle is nonzero here too.
     """
-    from digest42.transforms import observables_from_elements
+    from ds42.transforms import observables_from_elements
 
     neo, other = d2pair
     R, V = _observer()
@@ -1223,7 +1223,7 @@ def test_posterior_helper_gates_the_policy_on_the_mechanism():
     mechanism evidence; the policy fires only when the region's *measure* is at
     least ``H_TRUNCATION_MEASURE_MIN`` at/above the support end.
     """
-    from digest42.classifier import (H_TRUNCATION_MEASURE_MIN,
+    from ds42.classifier import (H_TRUNCATION_MEASURE_MIN,
                                      _fully_truncated_in_H, _posterior)
 
     T = H_TRUNCATION_MEASURE_MIN
@@ -1283,7 +1283,7 @@ def test_posterior_helper_gates_the_policy_on_the_mechanism():
 
 
 def test_h_support_end_is_the_pair_level_boundary():
-    from digest42.classifier import h_support_end
+    from ds42.classifier import h_support_end
 
     trunc = Digest2Histogram.neo_other_pair(MODEL_PATH)
     ext = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=30.0)
@@ -1345,10 +1345,10 @@ def test_policy_does_not_fire_on_zero_density_without_h_truncation(
     NOT claim support truncation — the old trigger fired on the *symptom*
     (both Lambdas zero) and asserted a mechanism that had not occurred.
     """
-    from digest42.backend import core_available
+    from ds42.backend import core_available
 
     if backend == "rust" and not core_available():  # pragma: no cover
-        pytest.skip("digest42._core not built")
+        pytest.skip("ds42._core not built")
     neo, other = d2pair
     (rate, vmag), kw = _POLICY_FALSE_POSITIVES[case]
     R, V = _observer()
@@ -1381,7 +1381,7 @@ def test_false_positive_geometries_are_what_the_review_described(d2pair, case):
     mechanism: the region is non-empty, every node has a finite implied H, and
     NONE of them is at/above the support end.
     """
-    from digest42.classifier import h_support_end
+    from ds42.classifier import h_support_end
 
     neo, other = d2pair
     (rate, vmag), kw = _POLICY_FALSE_POSITIVES[case]
@@ -1422,7 +1422,7 @@ def test_all_nodes_masked_is_not_a_policy_case(d2pair):
     end-to-end coverage of the branch comes from the false-positive cases
     above.
     """
-    from digest42.classifier import _fully_truncated_in_H, _posterior
+    from ds42.classifier import _fully_truncated_in_H, _posterior
 
     assert _fully_truncated_in_H(0, 0.0, 0.0) is False
     assert _posterior(0.0, 0.0, 9999, 0, 0.0, 0.0)[2] == "both_zero"
@@ -1430,10 +1430,10 @@ def test_all_nodes_masked_is_not_a_policy_case(d2pair):
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
 def test_fully_truncated_tracklet_is_policy_scored_one(d2pair, backend):
-    from digest42.backend import core_available
+    from ds42.backend import core_available
 
     if backend == "rust" and not core_available():  # pragma: no cover
-        pytest.skip("digest42._core not built")
+        pytest.skip("ds42._core not built")
     neo, other = d2pair
     att, R, V, kw = _fully_truncated_case()
     with pytest.warns(RuntimeWarning) as rec:
@@ -1458,10 +1458,10 @@ def test_fully_truncated_tracklet_is_policy_scored_one(d2pair, backend):
 
 def test_both_backends_agree_exactly_on_the_policy(d2pair):
     """Implemented once in the shared post-processing, so this is identity."""
-    from digest42.backend import core_available
+    from ds42.backend import core_available
 
     if not core_available():  # pragma: no cover
-        pytest.skip("digest42._core not built")
+        pytest.skip("ds42._core not built")
     neo, other = d2pair
     att, R, V, kw = _fully_truncated_case()
     out = {}
@@ -1526,10 +1526,10 @@ def test_empty_admissible_region_still_returns_nan_under_the_policy(d2pair,
     admitted at all — so there is nothing to triage on and the answer stays
     nan.
     """
-    from digest42.backend import core_available
+    from ds42.backend import core_available
 
     if backend == "rust" and not core_available():  # pragma: no cover
-        pytest.skip("digest42._core not built")
+        pytest.skip("ds42._core not built")
     neo, other = d2pair
     R, V = _observer()
     att = opposition_tracklet(1.0, 20.0, R_obs=R)
@@ -1551,7 +1551,7 @@ def test_classify_many_carries_the_policy_status(d2pair):
     att_ok = opposition_tracklet(0.3, 21.0, R_obs=R)
     atts = [att_ok, att_trunc, att_ok]
     for backend in ("python", "rust"):
-        from digest42.backend import core_available
+        from ds42.backend import core_available
 
         if backend == "rust" and not core_available():  # pragma: no cover
             continue
@@ -1645,10 +1645,10 @@ def test_the_eleven_real_neocp_wall_tracklets_still_flag(backend, diagnostics):
     cached tracklets through the real classifier on both backends and in both
     diagnostics modes, and requires all 11 to carry the policy flag.
     """
-    from digest42.backend import core_available
+    from ds42.backend import core_available
 
     if backend == "rust" and not core_available():  # pragma: no cover
-        pytest.skip("digest42._core not built")
+        pytest.skip("ds42._core not built")
     if not os.path.exists(os.path.join(PILOT_DIR, "tracklets.json")):
         pytest.skip("NEOCP pilot tracklets not present")
 

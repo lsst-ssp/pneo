@@ -155,7 +155,7 @@ fn hg_phase_integral(alpha: f64, g: f64) -> f64 {
 /// Quadrature configuration.
 ///
 /// The rho axis is **not** generated here: it is computed by
-/// `digest42.backend.rho_axis` with `np.geomspace` — the same call
+/// `ds42.backend.rho_axis` with `np.geomspace` — the same call
 /// `ranging.build_grid` makes — and handed in.  That is deliberate, and it is a
 /// correctness requirement rather than a convenience:
 ///
@@ -188,7 +188,7 @@ pub struct GridCfg {
 /// caps still matter for `n_rhodot`, which arrives as a bare integer, and for
 /// the **product**, because `n_rho * n_rhodot` is the node count and
 /// `n_rho = n_rhodot = 2^32` used to wrap it to zero — a ~4e9-iteration loop
-/// with the GIL released, i.e. an uninterruptible hang.  `digest42.backend`
+/// with the GIL released, i.e. an uninterruptible hang.  `ds42.backend`
 /// mirrors both caps so the error is a `ValueError` rather than PyO3's
 /// `OverflowError` for counts too large for an `i64`.
 pub const MAX_NODES_PER_AXIS: i64 = 100_000_000;

@@ -2,18 +2,18 @@
 members = ["."]
 
 [package]
-name = "digest42-core"
+name = "ds42-core"
 # No version: the crate is an implementation detail of the Python package and
 # is never published to crates.io; the package version lives in the git tag
 # (setuptools-scm).  Cargo >= 1.75 defaults version to 0.0.0 for
 # publish = false packages.
 publish = false
 edition = "2021"
-description = "Fused Rust kernel for the digest42 Bayesian tracklet classifier"
+description = "Fused Rust kernel for the ds42 Bayesian tracklet classifier"
 license = "BSD-3-Clause"
 
 [lib]
-name = "digest42_core"
+name = "ds42_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

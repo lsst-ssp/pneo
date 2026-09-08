@@ -11,7 +11,7 @@ evaluating, for each population component C,
     Lambda_C(A, V) = int_AR n_C(Phi(A, rho, rho_dot), H(V, rho))
                             |det d(E)/d(A, rho, rho_dot)| d(rho) d(rho_dot)
 
-on the quadrature nodes produced by :func:`digest42.ranging.build_grid`
+on the quadrature nodes produced by :func:`ds42.ranging.build_grid`
 (DESIGN §2.3, §2.5), and then forming
 
     P(NEO) = Lambda_NEO / (Lambda_NEO + Lambda_other)          (DESIGN §2.4)
@@ -237,7 +237,7 @@ class ClassificationResult:
 
         ``h`` is **not** defaulted and is not 25.5 by assumption: pass the
         support end of the components you actually scored with —
-        ``digest42.classifier.h_support_end(neo, other)``, which is 25.5 for
+        ``ds42.classifier.h_support_end(neo, other)``, which is 25.5 for
         the D-4 digest2 pair, ``h_extend_to`` under D-19, and ``inf`` under the
         D-14 clamp (where this diagnostic is vacuous, since nothing is
         truncated above).
@@ -278,7 +278,7 @@ class ClassificationResult:
             actually scored, ``h_support_end(neo, other)``, not the literal
             25.5, which is only right for the unextended D-4 pair::
 
-                h_max = digest42.classifier.h_support_end(neo, other)
+                h_max = ds42.classifier.h_support_end(neo, other)
                 res.posterior_mass_where(
                     lambda r: (r.node_q > 1.3) & (r.node_H > h_max)
                 )
@@ -493,7 +493,7 @@ def h_support_end(neo, other) -> float:
 
     ``max`` over the pair of each component's ``support["H"][1]``, because
     "outside both supports" needs the *further* of the two boundaries.  For the
-    shipped :class:`~digest42.population.Digest2Histogram` pair this is 25.5,
+    shipped :class:`~ds42.population.Digest2Histogram` pair this is 25.5,
     or ``h_extend_to`` under D-19, or ``+inf`` under the D-14 clamp (which
     never runs out of model above 25.5).
 
@@ -630,7 +630,7 @@ def _posterior(
 
     **This is the single shared post-processing step of both backends.**  The
     Python reference (:func:`classify`) and the Rust glue
-    (:func:`digest42.backend._result_from_core`) both call this function and
+    (:func:`ds42.backend._result_from_core`) both call this function and
     then :func:`_warn_status`; nothing about the posterior, the status
     vocabulary or the warnings is implemented per backend, so the two cannot
     drift apart on any of it by construction.
@@ -755,7 +755,7 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
     """
     if status == "fully_truncated_flagged":
         warnings.warn(
-            "digest42.classify: both marginal likelihoods are zero "
+            "ds42.classify: both marginal likelihoods are zero "
             f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}) over a "
             "NON-EMPTY admissible region whose measure lies almost entirely "
             f"(>= {100.0 * H_TRUNCATION_MEASURE_MIN:g}%) AT OR ABOVE both "
@@ -780,7 +780,7 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
         # the model inside the support, implied H below zero, or no evaluable
         # node at all).  See `_fully_truncated_in_H`.
         warnings.warn(
-            "digest42.classify: both marginal likelihoods are zero "
+            "ds42.classify: both marginal likelihoods are zero "
             f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); both "
             "population components evaluate to zero everywhere in the "
             "admissible region. P(NEO) is undefined. This is NOT the D-19 "
@@ -798,7 +798,7 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
         )
     elif status == "overflow":
         warnings.warn(
-            "digest42.classify: both marginal likelihoods overflowed to "
+            "ds42.classify: both marginal likelihoods overflowed to "
             "infinity; their ratio is indeterminate and P(NEO) = 0.5 is "
             "returned as the symmetric limit. Rescale the population "
             "components.",
@@ -807,7 +807,7 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
         )
     elif status == "nan":  # pragma: no cover - integrand is sanitized per node
         warnings.warn(
-            "digest42.classify: a marginal likelihood is NaN "
+            "ds42.classify: a marginal likelihood is NaN "
             f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); "
             "this indicates a bug in a PopulationDensity implementation. "
             "P(NEO) is undefined.",
@@ -871,7 +871,7 @@ def classify(
     R_obs, V_obs : (3,) arrays, optional
         Observer heliocentric state, EQUATORIAL frame [AU, AU/day].  When
         omitted it is computed from ``att.epoch`` via
-        :func:`digest42.attributable.observer_state`, using the
+        :func:`ds42.attributable.observer_state`, using the
         ``obscode``/``lon_deg``/``lat_deg``/``height_m`` arguments below (the
         geocenter if none are given).
     rho_min, rho_max : float
@@ -888,17 +888,17 @@ def classify(
         uses ``constants.G_SLOPE_DEFAULT`` = 0.15 [D-5].
     obscode, lon_deg, lat_deg, height_m : optional
         Observatory, forwarded verbatim to
-        :func:`digest42.attributable.observer_state` when the observer state
+        :func:`ds42.attributable.observer_state` when the observer state
         is not supplied directly.  Ignored when both ``R_obs`` and ``V_obs``
         are given.
     backend : {"auto", "python", "rust"}
         Which implementation of the node loop to use.  ``"python"`` is the
         reference pipeline in this module; ``"rust"`` is the fused kernel in
-        the ``digest42._core`` extension (see :mod:`digest42.backend`), which
+        the ``ds42._core`` extension (see :mod:`ds42.backend`), which
         evaluates the composed Jacobian in closed form instead of building and
         inverting the 6x6 chain.  ``"auto"`` (the default) picks ``"rust"``
         when the extension is importable and falls back to ``"python"``
-        otherwise; ``DIGEST42_BACKEND`` overrides the argument.  Both backends
+        otherwise; ``DS42_BACKEND`` overrides the argument.  Both backends
         return the same ``ClassificationResult`` contract.
     diagnostics : bool
         Whether to populate the per-node diagnostics (``grid``,
@@ -926,7 +926,7 @@ def classify(
     counters agree exactly: the Rust kernel reproduces WP2's conditioning guard
     itself rather than approximating it (``rust/src/guard.rs``).  The rho
     quadrature axis is computed once in Python by
-    :func:`digest42.backend.rho_axis` -- the same ``np.geomspace`` call
+    :func:`ds42.backend.rho_axis` -- the same ``np.geomspace`` call
     ``build_grid`` makes -- and handed to the kernel, so the two backends
     integrate over a bit-identical grid on every numpy build and CPU.  Measured on
     the stored gate_v0 catalogue (``validation/backend_parity.py``): max
@@ -1017,7 +1017,7 @@ def classify(
     n_nodes = int(grid.rho.size)
     if n_nodes == 0:
         warnings.warn(
-            "digest42.classify: empty admissible region "
+            "ds42.classify: empty admissible region "
             f"(rho in [{rho_min:g}, {rho_max:g}] AU); P(NEO) is undefined.",
             RuntimeWarning,
             stacklevel=2,
@@ -1183,7 +1183,7 @@ def classify_many(
 
     With the Python backend this is a loop over :func:`classify`; with the Rust
     backend (``backend="rust"``, or ``"auto"`` where the extension is present)
-    the whole batch is handed to ``digest42._core`` in **one** call, the GIL is
+    the whole batch is handed to ``ds42._core`` in **one** call, the GIL is
     released, and rayon parallelizes across tracklets.  ``n_threads`` (Rust only)
     caps the worker count; the default uses rayon's global pool, i.e. one thread
     per core.  Observer states are still resolved in Python (astropy), one call

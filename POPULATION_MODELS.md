@@ -1,6 +1,6 @@
 # Solar System Population Models — Research Summary
 
-*Survey of available small-body population models for the digest42 Bayesian tracklet
+*Survey of available small-body population models for the ds42 Bayesian tracklet
 classifier (NEO vs. everything else). Literature and data products through 2026-08-31.
 Compiled from web/literature research on 2026-08-31.*
 
@@ -348,14 +348,14 @@ From the abstract — the **"Synthetic Main Belt" (SMB)** model:
 **Nothing published through 2026-08** as a normalizing-flow or neural-density representation
 of small-body populations. Closest items: RSBPM's internal Gaussian KDEs (§2.5); NEOMOD's
 grid+simulator form; and ML *classifiers* consuming population-model outputs — direct
-precedents/competitors for digest42:
+precedents/competitors for ds42:
 - Vereš, Cloete, Payne & Loeb 2025, A&A 698, A242 ([arXiv:2505.11910](https://arxiv.org/abs/2505.11910)):
   GBM/RF on 30 digest2 parameter categories for NEOCP candidates 2019–2024.
   *(author order corrected 2026-09-02 against ADS, 2025A&A...698A.242V)*
 - Cloete, Vereš & Loeb 2024, A&A 691, A338 ([arXiv:2412.02112](https://arxiv.org/pdf/2412.02112)): tracklet-level
   ISO classification for LSST, trained on DP0.3; digest2 scores dominate feature importance.
 
-## 12. Recommended composition for digest42
+## 12. Recommended composition for ds42
 
 | Mixture piece | Launch choice | Upgrade path |
 |---|---|---|
@@ -368,7 +368,7 @@ precedents/competitors for digest42:
 | Comets | decide scope (see §9.1–9.2 caveat) | — |
 | ISOs | out of scope (bound orbits only) | separate class + hyperbolic ranging domain |
 
-Since digest42 builds its own density-estimation layer, catalog-form inputs are not a blocker:
+Since ds42 builds its own density-estimation layer, catalog-form inputs are not a blocker:
 each population is a pluggable density module (parametric ones evaluated directly, catalog
 ones density-estimated). Inner populations dominate NEO confusion → the belt module matters
 most; the SMB timeline question is worth resolving early.

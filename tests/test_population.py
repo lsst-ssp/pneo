@@ -23,8 +23,8 @@ import os
 import numpy as np
 import pytest
 
-from digest42.constants import Q_NEO
-from digest42.population import (
+from ds42.constants import Q_NEO
+from ds42.population import (
     BIN_VOLUME,
     D2_CLASSES,
     D2_VARIANTS,
@@ -264,7 +264,7 @@ def test_module_partitions_match_d2model_c():
     assert MODEL_SHAPE == REF_SHAPE == (29, 8, 11, 18)
 
     # ... and the derived edge arrays: leading 0, degrees -> radians.
-    from digest42.population import (
+    from ds42.population import (
         E_EDGES, H_EDGES, I_EDGES, I_EDGES_DEG, Q_EDGES,
     )
 
@@ -281,7 +281,7 @@ def test_module_partitions_match_d2model_c():
 
 
 def test_pseudo_volume_matches_naive_transcription():
-    from digest42.population import _MUK_PSEUDO_VOLUME
+    from ds42.population import _MUK_PSEUDO_VOLUME
 
     np.testing.assert_allclose(
         _MUK_PSEUDO_VOLUME, naive_muk_pseudo_volume(), rtol=1e-15, atol=0.0
@@ -542,7 +542,7 @@ def test_density_zero_outside_support(pair_all, comp_index):
 def test_last_h_bin_is_truncated_not_clamped(pair_all):
     """D-4 deviation from digest2: hToBin() clamps H >= 24 into the top bin.
 
-    digest42 truncates instead: [24, 25.5) carries density, >= 25.5 is zero.
+    ds42 truncates instead: [24, 25.5) carries density, >= 25.5 is zero.
     """
     _, other = pair_all
     el, _h = bin_centre(other, populated_bin(other, ih=len(REF_HPART) - 1))
@@ -933,7 +933,7 @@ def test_read_rejects_incomplete_file(tmp_path):
 # WP7 addendum — the digest2-emulation knob (h_top_bin_infinite)
 #
 # digest2's ``hToBin`` clamps every H >= 24 into the final bin, i.e. it treats
-# the top H bin as [24, inf); digest42 truncates at 25.5 per D-4.  The knob
+# the top H bin as [24, inf); ds42 truncates at 25.5 per D-4.  The knob
 # reinstates digest2's clamp so that the DESIGN §4.2 head-to-head can be run
 # with the two codes consuming genuinely identical effective models.  These
 # tests pin down: what changes (H >= 25.5 only), what does not (everything
@@ -1012,7 +1012,7 @@ def test_clamped_does_not_emulate_the_negative_H_half_of_the_clamp(
     for h in (-1e-9, -1.0, -30.0):
         assert float(clamped.density(el, h)) == 0.0
         assert float(plain.density(el, h)) == 0.0
-    import digest42.population as _pop
+    import ds42.population as _pop
     assert "deliberately NOT emulated" in _pop.__doc__
 
 
@@ -1225,7 +1225,7 @@ def naive_pchip_slopes(x, y):
 
 
 def test_pchip_slopes_match_an_independent_transcription():
-    from digest42.population import _pchip_slopes
+    from ds42.population import _pchip_slopes
 
     rng = np.random.default_rng(4242)
     x = np.array([0.0, 0.3, 1.0, 1.1, 4.0, 9.0, 9.5])
@@ -1246,13 +1246,13 @@ def test_pchip_slopes_match_an_independent_transcription():
 def test_pchip_slopes_match_scipy_when_scipy_is_installed():
     """Cross-check against the canonical implementation, if it is importable.
 
-    scipy is NOT a digest42 dependency [D-9] — hence the hand transcription in
+    scipy is NOT a ds42 dependency [D-9] — hence the hand transcription in
     the test above, which is the load-bearing check.  When scipy happens to be
     present this pins us to the same construction the rest of the world calls
     PCHIP.
     """
     interp = pytest.importorskip("scipy.interpolate")
-    from digest42.population import _pchip_slopes
+    from ds42.population import _pchip_slopes
 
     rng = np.random.default_rng(99)
     x = np.array([0.0, 6.0, 8.0, 10.0, 11.0, 12.0, 25.5])
@@ -1280,8 +1280,8 @@ def test_pchip_slopes_obey_the_monotonicity_bound(pair_pchip):
     consequences.  ``alpha, beta in [0, 3]`` puts every interval inside the
     monotonicity region, which is what makes C' >= 0.
     """
-    from digest42.population import _pchip_slopes
-    from digest42.population import H_EDGES
+    from ds42.population import _pchip_slopes
+    from ds42.population import H_EDGES
 
     for comp in pair_pchip:
         cum = np.zeros(comp.counts.shape[:3] + (19,))
@@ -1459,7 +1459,7 @@ def test_pchip_density_is_discontinuous_at_the_support_endpoints(pair_pchip):
         assert comp.density(hot, np.array([h_out]))[0] == 0.0
 
     for doc in (Digest2Histogram.__doc__,
-                __import__("digest42.population", fromlist=["x"]).__doc__):
+                __import__("ds42.population", fromlist=["x"]).__doc__):
         assert "discontinuous" in doc
 
 
@@ -1702,7 +1702,7 @@ def test_pchip_and_the_d14_clamp_are_mutually_exclusive():
 @pytest.mark.parametrize("bad", ["linear", "cubic", "spline", "None", "",
                                  "PCHIP", "pchip "])
 def test_unknown_h_interpolation_names_the_valid_options(bad):
-    from digest42.population import H_INTERPOLATIONS
+    from ds42.population import H_INTERPOLATIONS
 
     with pytest.raises(ValueError) as ei:
         Digest2Histogram(np.zeros(MODEL_SHAPE), "other", h_interpolation=bad)
@@ -1756,7 +1756,7 @@ def test_pchip_mode_documents_what_it_does_not_fix():
     the 1/(e sin i) integrable singularity — that lives on the e and i bin
     edges and is a property of the measure, not of the H reconstruction.
     """
-    doc = __import__("digest42.population", fromlist=["x"]).__doc__
+    doc = __import__("ds42.population", fromlist=["x"]).__doc__
     assert "e sin i" in doc
     assert "staircase" in doc
     assert "cumulative" in doc
