@@ -18,3 +18,5 @@ validation/d2_false_alarms/output/*.npz
 validation/jacobian_off/output/*.npz
 validation/mpcorb_fig4/output/*.npz
 validation/mpcorb_fig4/output/points*.json
+
+.ipynb_checkpoints/
