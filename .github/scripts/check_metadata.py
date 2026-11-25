@@ -28,7 +28,12 @@ import zipfile
 #   Description-Content-Type -- maturin says "text/markdown; charset=UTF-8;
 #     variant=GFM" where setuptools says "text/markdown".  Same README, same
 #     renderer on PyPI; a cosmetic difference in how the tools spell it.
-IGNORED = {"description-content-type"}
+#   Dynamic -- only meaningful in an sdist, where it tells a builder which
+#     fields may change when the wheel is built.  setuptools marks
+#     "license-file" Dynamic there even though the License-File value is
+#     fixed; maturin's wheels carry no Dynamic.  The fields themselves,
+#     License-File included, are still compared.
+IGNORED = {"description-content-type", "dynamic"}
 
 
 def fail(msg: str) -> None:
