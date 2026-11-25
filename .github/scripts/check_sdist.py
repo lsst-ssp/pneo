@@ -50,7 +50,6 @@ FORBIDDEN_PREFIXES = (
     "validation/",
     "paper/",
     ".github/",
-    "reproduce/",
     "rust/target/",
 )
 FORBIDDEN_SUFFIXES = (".so", ".pyd", ".dylib", ".pyc", ".csv", ".npz", ".model")

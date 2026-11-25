@@ -15,7 +15,7 @@
 #   * data/  -- digest2.model.csv is ~4 MB of MPC data fetched at first use by
 #     scripts/fetch_digest2_model.py, is gitignored, and is not ours to
 #     redistribute;
-#   * docs of record, reproduce/, .github/ -- development material,
+#   * docs of record, .github/ -- development material,
 #     not part of the installable package;
 #   * rust/target/ and any compiled extension -- build products.
 # The release workflow asserts each of those absences on the built sdist rather
@@ -32,7 +32,6 @@ include MANIFEST.in
 
 prune rust/target
 prune data
-prune reproduce
 prune .github
 exclude .gitignore
 exclude DECISIONS.md DESIGN.md IMPLEMENTATION.md POPULATION_MODELS.md RELEASING.md
