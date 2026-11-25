@@ -1,7 +1,7 @@
 //! The population-model handle: flattened binned densities owned by Rust.
 //!
-//! Port of `pneo.population._bin_index`, `Digest2Histogram._h_bin` and
-//! `Digest2Histogram.density`.  The lookup semantics must be *bit-identical* to
+//! Port of `pneo.models.digest2._bin_index`, `Digest2Component._h_bin` and
+//! `Digest2Component.density`.  The lookup semantics must be *bit-identical* to
 //! the Python ones:
 //!
 //! * half-open `[lo, hi)` bins, matching digest2's `x >= part[b]` rule;
@@ -14,7 +14,7 @@
 //!   `H < 0` is deliberately left out of support in both modes.
 //!
 //! **The H axis length is data-driven, and that is what carries D-19.** The
-//! finite H extension (`Digest2Histogram(h_extend_to=30.0)`) appends a synthetic
+//! finite H extension (`Digest2Component(h_extend_to=30.0)`) appends a synthetic
 //! 19th H bin `[25.5, 30.0)` to every cell.  Python builds the extended edge,
 //! count and coefficient arrays *before* the handoff, so from this file's point
 //! of view an extended model is simply a model with `dims[3] == 19` and a 20-long
@@ -24,13 +24,13 @@
 //! truncation at the further-out boundary), and the synthetic bin is looked up
 //! by the same half-open rule as any other.  `CoreModel::new`'s "finite and
 //! strictly increasing" edge check is what rejects a nonsensical extension.
-//! Bit-identity with `Digest2Histogram.density` in extended mode — histogram and
+//! Bit-identity with `Digest2Component.density` in extended mode — histogram and
 //! pchip — is asserted in `tests/test_backend_parity.py`.
 //!
-//! The smooth-in-H mode (`Digest2Histogram(h_interpolation="pchip")`) is carried
+//! The smooth-in-H mode (`Digest2Component(h_interpolation="pchip")`) is carried
 //! as an optional per-interval coefficient array instead of the flat density
 //! table.  The coefficients are **not** recomputed here: Python precomputes them
-//! once (`Digest2Histogram.h_coeffs`, already divided by
+//! once (`Digest2Component.h_coeffs`, already divided by
 //! `dq de di (2 pi)^3`) and hands them over, and both sides evaluate the same
 //! Horner form `a + s (b + s c)` with `s = H - h_edges[ih]`.  Sharing the
 //! coefficients and fixing the grouping is what makes the two backends
@@ -39,15 +39,15 @@
 //! `a + s * (b + s * c)`, and LLVM does not fuse it into FMAs without
 //! fast-math (which this crate does not enable).
 
-/// One binned population component (a flattened `Digest2Histogram`).
+/// One binned population component (a flattened `Digest2Component`).
 pub struct Histogram {
     /// (n_q, n_e, n_i, n_h) — the C-order shape of `table`.
     pub dims: [usize; 4],
     /// Bin edges: q [AU], e [-], i [rad], H [mag]; `edges[k].len() == dims[k]+1`.
     pub edges: [Vec<f64>; 4],
-    /// `Digest2Histogram._density_table` flattened C-order.
+    /// `Digest2Component._density_table` flattened C-order.
     pub table: Vec<f64>,
-    /// `Digest2Histogram.h_coeffs` flattened C-order (`3` per (cell, H bin)),
+    /// `Digest2Component.h_coeffs` flattened C-order (`3` per (cell, H bin)),
     /// or `None` for the piecewise-constant mode.  When present it *replaces*
     /// `table` in `density` — `table` is then carried for provenance only.
     pub h_coeffs: Option<Vec<f64>>,
@@ -79,7 +79,7 @@ pub fn bin_index(edges: &[f64], x: f64) -> Option<usize> {
 }
 
 impl Histogram {
-    /// `Digest2Histogram._h_bin`, returning `None` when out of support.
+    /// `Digest2Component._h_bin`, returning `None` when out of support.
     #[inline(always)]
     pub fn h_bin(&self, h: f64) -> Option<usize> {
         if self.h_top_bin_infinite {
@@ -94,7 +94,7 @@ impl Histogram {
 
     /// The H value at and above which this component's density is exactly 0.
     ///
-    /// `Digest2Histogram.support["H"][1]`, computed the same way: the last H
+    /// `Digest2Component.support["H"][1]`, computed the same way: the last H
     /// edge normally (25.5, or `h_extend_to` under D-19), `+inf` under the
     /// D-14 clamp, where the density never runs out above the support.  Used
     /// only by the D-19 mechanism counter in `kernel::classify_one`; the

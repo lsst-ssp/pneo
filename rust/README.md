@@ -46,7 +46,7 @@ Dependencies are exactly the three the design allows: `pyo3`, `numpy`
 | file | contents |
 | --- | --- |
 | `src/consts.rs` | copies of `pneo.constants` / `transforms` constants (`K_GAUSS`, obliquity, H,G coefficients, `_COND_MAX`) |
-| `src/model.rs` | `Histogram`: the flattened `(q, e, i, H)` density table and the bin lookup, bit-identical to `population._bin_index` / `Digest2Histogram.density` including the D-14 clamp |
+| `src/model.rs` | `Histogram`: the flattened `(q, e, i, H)` density table and the bin lookup, bit-identical to `population._bin_index` / `Digest2Component.density` including the D-14 clamp |
 | `src/kernel.rs` | the fused node loop: geometry → elements → photometry → density → Jacobian → accumulation; ρ̇ node generation; grid validation |
 | `src/guard.rs` | exact port of WP2's conditioning guard, plus the reachable-manifold prefilter that decides when to run it |
 | `src/lib.rs` | PyO3 surface: `CoreModel`, `classify_core`, `classify_batch`, and the test hooks |

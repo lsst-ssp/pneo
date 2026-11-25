@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from pneo.constants import Q_NEO
-from pneo.population import (
+from pneo.models.digest2 import (
     BIN_VOLUME,
     D2_CLASSES,
     D2_VARIANTS,
@@ -33,8 +33,8 @@ from pneo.population import (
     IPART_DEG,
     MODEL_SHAPE,
     QPART,
-    Digest2Histogram,
-    PopulationDensity,
+    Digest2Component,
+    PopulationComponent,
     read_digest2_model,
 )
 
@@ -105,12 +105,12 @@ def tables():
 
 @pytest.fixture(scope="module")
 def pair_all():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="All")
+    return Digest2Component.neo_other_pair(MODEL_PATH, variant="All")
 
 
 @pytest.fixture(scope="module")
 def pair_unk():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="Unk")
+    return Digest2Component.neo_other_pair(MODEL_PATH, variant="Unk")
 
 
 @pytest.fixture(scope="module")
@@ -230,7 +230,7 @@ def test_both_variants_build_components(pair_all, pair_unk):
         assert (neo.label, other.label) == ("NEO", "other")
         assert neo.variant == other.variant == variant
         assert neo.parameterization == other.parameterization == "qei"
-        assert isinstance(neo, PopulationDensity)
+        assert isinstance(neo, PopulationComponent)
         assert neo.total_count > 0 and other.total_count > 0
 
 
@@ -242,7 +242,7 @@ def test_unk_components_le_all_components(pair_all, pair_unk):
 
 def test_bad_variant_rejected():
     with pytest.raises(ValueError):
-        Digest2Histogram.neo_other_pair(MODEL_PATH, variant="Known")
+        Digest2Component.neo_other_pair(MODEL_PATH, variant="Known")
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ def test_module_partitions_match_d2model_c():
     assert MODEL_SHAPE == REF_SHAPE == (29, 8, 11, 18)
 
     # ... and the derived edge arrays: leading 0, degrees -> radians.
-    from pneo.population import (
+    from pneo.models.digest2 import (
         E_EDGES, H_EDGES, I_EDGES, I_EDGES_DEG, Q_EDGES,
     )
 
@@ -280,7 +280,7 @@ def test_module_partitions_match_d2model_c():
 
 
 def test_pseudo_volume_matches_naive_transcription():
-    from pneo.population import _MUK_PSEUDO_VOLUME
+    from pneo.models.digest2 import _MUK_PSEUDO_VOLUME
 
     np.testing.assert_allclose(
         _MUK_PSEUDO_VOLUME, naive_muk_pseudo_volume(), rtol=1e-15, atol=0.0
@@ -346,7 +346,7 @@ def test_raw_cells_are_not_counts(tables):
 @pytest.mark.parametrize("variant", ["All", "Unk"])
 def test_integrated_density_reproduces_total_count(variant):
     """sum over bins of density(bin centre) * bin volume * (2 pi)^3 == N."""
-    neo, other = Digest2Histogram.neo_other_pair(MODEL_PATH, variant=variant)
+    neo, other = Digest2Component.neo_other_pair(MODEL_PATH, variant=variant)
     qc = 0.5 * (neo.q_edges[:-1] + neo.q_edges[1:])
     ec = 0.5 * (neo.e_edges[:-1] + neo.e_edges[1:])
     ic = 0.5 * (neo.i_edges[:-1] + neo.i_edges[1:])
@@ -403,7 +403,7 @@ def test_density_units_single_bin(pair_all):
 @pytest.mark.parametrize("variant", ["All", "Unk"])
 def test_partition_residual_is_exactly_zero(variant, tables):
     """neo + other == SS, cell by cell, with zero residual."""
-    neo, other = Digest2Histogram.neo_other_pair(MODEL_PATH, variant=variant)
+    neo, other = Digest2Component.neo_other_pair(MODEL_PATH, variant=variant)
     ss = tables[(variant, "SS")]
     residual = np.asarray(neo.counts) + np.asarray(other.counts) - ss
     assert np.abs(residual).max() == 0.0
@@ -426,7 +426,7 @@ def test_neo_class_is_exactly_the_q_lt_1p3_part_of_ss(variant, tables):
 @pytest.mark.parametrize("variant", ["All", "Unk"])
 def test_complementarity_at_q_1p3(variant):
     """NEO density vanishes for q >= 1.3; other density vanishes for q < 1.3."""
-    neo, other = Digest2Histogram.neo_other_pair(MODEL_PATH, variant=variant)
+    neo, other = Digest2Component.neo_other_pair(MODEL_PATH, variant=variant)
     rng = np.random.default_rng(7)
     n = 200_000
     q = rng.uniform(0.0, 100.0, n)
@@ -770,7 +770,7 @@ def test_sample_reproducible_and_edge_cases(pair_all):
     with pytest.raises(ValueError):
         neo.sample(-1, np.random.default_rng(3))
 
-    empty = Digest2Histogram(np.zeros(MODEL_SHAPE), "other")
+    empty = Digest2Component(np.zeros(MODEL_SHAPE), "other")
     assert empty.total_count == 0.0
     with pytest.raises(ValueError):
         empty.sample(10, np.random.default_rng(3))
@@ -799,7 +799,7 @@ def test_sample_hits_the_first_bin_of_each_axis(pair_all):
 
 def test_interpolation_raises():
     with pytest.raises(NotImplementedError):
-        Digest2Histogram(np.zeros(MODEL_SHAPE), "other", interpolate=True)
+        Digest2Component(np.zeros(MODEL_SHAPE), "other", interpolate=True)
 
 
 # ---------------------------------------------------------------------------
@@ -809,15 +809,15 @@ def test_interpolation_raises():
 
 def test_constructor_validation():
     with pytest.raises(ValueError):
-        Digest2Histogram(np.zeros((2, 2)), "other")
+        Digest2Component(np.zeros((2, 2)), "other")
     bad = np.zeros(MODEL_SHAPE)
     bad[0, 0, 0, 0] = -1.0
     with pytest.raises(ValueError):
-        Digest2Histogram(bad, "other")
+        Digest2Component(bad, "other")
     bad2 = np.zeros(MODEL_SHAPE)
     bad2[0, 0, 0, 0] = np.nan
     with pytest.raises(ValueError):
-        Digest2Histogram(bad2, "other")
+        Digest2Component(bad2, "other")
 
 
 def test_counts_view_is_read_only(pair_all):
@@ -827,7 +827,7 @@ def test_counts_view_is_read_only(pair_all):
 
 
 def test_from_classes_diagnostic(tables):
-    h = Digest2Histogram.from_classes(MODEL_PATH, ("N22",), "NEO")
+    h = Digest2Component.from_classes(MODEL_PATH, ("N22",), "NEO")
     assert h.total_count == pytest.approx(tables[("All", "N22")].sum(), abs=0.5)
     assert h.classes == "N22"
 
@@ -848,14 +848,14 @@ def test_read_returns_isolated_dict(tables):
 
 def test_unknown_class_and_variant_raise_value_error():
     with pytest.raises(ValueError, match="unknown model variant"):
-        Digest2Histogram.neo_other_pair(MODEL_PATH, variant="nope")
+        Digest2Component.neo_other_pair(MODEL_PATH, variant="nope")
     with pytest.raises(ValueError, match="unknown model variant"):
-        Digest2Histogram.from_classes(MODEL_PATH, ("SS",), "other",
+        Digest2Component.from_classes(MODEL_PATH, ("SS",), "other",
                                       variant="nope")
     with pytest.raises(ValueError, match="unknown digest2 class"):
-        Digest2Histogram.from_classes(MODEL_PATH, ("MBA",), "other")
+        Digest2Component.from_classes(MODEL_PATH, ("MBA",), "other")
     with pytest.raises(ValueError, match="unknown digest2 class"):
-        Digest2Histogram.from_classes(MODEL_PATH, ("SS",), "other",
+        Digest2Component.from_classes(MODEL_PATH, ("SS",), "other",
                                       subtract=("TNO",))
 
 
@@ -907,9 +907,9 @@ def test_sample_unbound_fraction_is_documented(pair_all, pair_unk):
         # the "other" component is unaffected at the 1e-5 level
         oexact = 0.5 * np.asarray(other.counts)[:, 7].sum() / other.total_count
         assert oexact < 1e-5
-    assert "unbound" in Digest2Histogram.sample.__doc__.lower()
-    assert "1.92" in Digest2Histogram.sample.__doc__
-    assert "2.23" in Digest2Histogram.sample.__doc__
+    assert "unbound" in Digest2Component.sample.__doc__.lower()
+    assert "1.92" in Digest2Component.sample.__doc__
+    assert "2.23" in Digest2Component.sample.__doc__
 
 
 def test_read_rejects_bad_header(tmp_path):
@@ -942,13 +942,13 @@ def test_read_rejects_incomplete_file(tmp_path):
 
 @pytest.fixture(scope="module")
 def pair_all_clamped():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="All",
+    return Digest2Component.neo_other_pair(MODEL_PATH, variant="All",
                                            h_top_bin_infinite=True)
 
 
 @pytest.fixture(scope="module")
 def pair_unk_clamped():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="Unk",
+    return Digest2Component.neo_other_pair(MODEL_PATH, variant="Unk",
                                            h_top_bin_infinite=True)
 
 
@@ -1011,7 +1011,7 @@ def test_clamped_does_not_emulate_the_negative_H_half_of_the_clamp(
     for h in (-1e-9, -1.0, -30.0):
         assert float(clamped.density(el, h)) == 0.0
         assert float(plain.density(el, h)) == 0.0
-    import pneo.population as _pop
+    import pneo.models.digest2 as _pop
     assert "deliberately NOT emulated" in _pop.__doc__
 
 
@@ -1112,7 +1112,7 @@ def test_clamped_total_count_is_the_finite_bin_sum_and_says_so(
     clamped = pair_all_clamped[comp_index]
     assert clamped.total_count == plain.total_count
     assert clamped.total_count == pytest.approx(float(clamped.counts.sum()))
-    doc = Digest2Histogram.total_count.__doc__
+    doc = Digest2Component.total_count.__doc__
     assert "not** the integral" in doc or "not the integral" in doc
     assert "diverges" in doc
 
@@ -1121,18 +1121,18 @@ def test_clamped_flag_passes_through_the_factories():
     """neo_other_pair and from_classes must both carry the flag, and
     neo_other_pair must clamp BOTH components (a mixed pair is meaningless)."""
     for variant in D2_VARIANTS:
-        pair = Digest2Histogram.neo_other_pair(MODEL_PATH, variant,
+        pair = Digest2Component.neo_other_pair(MODEL_PATH, variant,
                                                h_top_bin_infinite=True)
         assert [c.h_top_bin_infinite for c in pair] == [True, True]
         assert [c.label for c in pair] == ["NEO", "other"]
         assert [c.variant for c in pair] == [variant, variant]
-        default = Digest2Histogram.neo_other_pair(MODEL_PATH, variant)
+        default = Digest2Component.neo_other_pair(MODEL_PATH, variant)
         assert [c.h_top_bin_infinite for c in default] == [False, False]
 
-    c = Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+    c = Digest2Component.from_classes(MODEL_PATH, ["MB1"], "other",
                                       h_top_bin_infinite=True)
     assert c.h_top_bin_infinite is True
-    assert Digest2Histogram.from_classes(
+    assert Digest2Component.from_classes(
         MODEL_PATH, ["MB1"], "other"
     ).h_top_bin_infinite is False
     assert "h_top_bin_infinite=True" in repr(c)
@@ -1141,7 +1141,7 @@ def test_clamped_flag_passes_through_the_factories():
 def test_clamped_mode_is_documented_as_gate_ineligible():
     """A comparison mode that leaked into the gate would silently invalidate
     DESIGN §4.1; the class docstring must say so in as many words."""
-    doc = Digest2Histogram.__doc__
+    doc = Digest2Component.__doc__
     assert "gate-ineligible" in doc
     assert "§4.1" in doc
     assert "normalizable" in doc
@@ -1166,7 +1166,7 @@ GL8_X, GL8_W = np.polynomial.legendre.leggauss(8)
 
 @pytest.fixture(scope="module")
 def pair_pchip():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, variant="All",
+    return Digest2Component.neo_other_pair(MODEL_PATH, variant="All",
                                            h_interpolation="pchip")
 
 
@@ -1224,7 +1224,7 @@ def naive_pchip_slopes(x, y):
 
 
 def test_pchip_slopes_match_an_independent_transcription():
-    from pneo.population import _pchip_slopes
+    from pneo.models.digest2 import _pchip_slopes
 
     rng = np.random.default_rng(4242)
     x = np.array([0.0, 0.3, 1.0, 1.1, 4.0, 9.0, 9.5])
@@ -1251,7 +1251,7 @@ def test_pchip_slopes_match_scipy_when_scipy_is_installed():
     PCHIP.
     """
     interp = pytest.importorskip("scipy.interpolate")
-    from pneo.population import _pchip_slopes
+    from pneo.models.digest2 import _pchip_slopes
 
     rng = np.random.default_rng(99)
     x = np.array([0.0, 6.0, 8.0, 10.0, 11.0, 12.0, 25.5])
@@ -1279,8 +1279,8 @@ def test_pchip_slopes_obey_the_monotonicity_bound(pair_pchip):
     consequences.  ``alpha, beta in [0, 3]`` puts every interval inside the
     monotonicity region, which is what makes C' >= 0.
     """
-    from pneo.population import _pchip_slopes
-    from pneo.population import H_EDGES
+    from pneo.models.digest2 import _pchip_slopes
+    from pneo.models.digest2 import H_EDGES
 
     for comp in pair_pchip:
         cum = np.zeros(comp.counts.shape[:3] + (19,))
@@ -1453,12 +1453,12 @@ def test_pchip_density_is_discontinuous_at_the_support_endpoints(pair_pchip):
                            (17, np.nextafter(25.5, 0.0), 25.5)):
         counts = np.zeros(MODEL_SHAPE)
         counts[3, 2, 4, k] = 500.0
-        comp = Digest2Histogram(counts, "other", h_interpolation="pchip")
+        comp = Digest2Component(counts, "other", h_interpolation="pchip")
         assert comp.density(hot, np.array([h_in]))[0] > 0.0
         assert comp.density(hot, np.array([h_out]))[0] == 0.0
 
-    for doc in (Digest2Histogram.__doc__,
-                __import__("pneo.population", fromlist=["x"]).__doc__):
+    for doc in (Digest2Component.__doc__,
+                __import__("pneo.models.digest2", fromlist=["x"]).__doc__):
         assert "discontinuous" in doc
 
 
@@ -1499,8 +1499,8 @@ def test_pchip_reduces_to_the_histogram_when_the_cell_is_flat_in_h():
     counts = np.zeros(MODEL_SHAPE)
     counts[5, 3, 6, :] = 1000.0 * dH
     counts[0, 0, 0, :] = 7.0 * dH
-    hist = Digest2Histogram(counts, "other")
-    smooth = Digest2Histogram(counts, "other", h_interpolation="pchip")
+    hist = Digest2Component(counts, "other")
+    smooth = Digest2Component(counts, "other", h_interpolation="pchip")
     el = cell_centres()
     for h in np.linspace(0.0, 25.49, 400):
         a = hist.density(el, np.full(el.shape[0], h))
@@ -1525,7 +1525,7 @@ def test_pchip_confines_a_sparse_cell_to_its_own_bin():
     for populated in range(len(REF_HPART)):
         counts = np.zeros(MODEL_SHAPE)
         counts[3, 2, 4, populated] = 1234.0
-        comp = Digest2Histogram(counts, "other", h_interpolation="pchip")
+        comp = Digest2Component(counts, "other", h_interpolation="pchip")
         for k in range(len(REF_HPART)):
             lo, hi = edges[k], edges[k + 1]
             half = 0.5 * (hi - lo)
@@ -1545,7 +1545,7 @@ def test_pchip_confines_a_sparse_cell_to_its_own_bin():
 
 def test_pchip_empty_cell_invents_nothing():
     """A cell with zero total has zero density at every H.  No exceptions."""
-    comp = Digest2Histogram(np.zeros(MODEL_SHAPE), "other",
+    comp = Digest2Component(np.zeros(MODEL_SHAPE), "other",
                             h_interpolation="pchip")
     el = cell_centres()
     for h in np.linspace(0.0, 25.4999, 500):
@@ -1681,30 +1681,30 @@ def test_pchip_sample_inversion_is_converged(pair_pchip):
 def test_pchip_and_the_d14_clamp_are_mutually_exclusive():
     counts = np.zeros(MODEL_SHAPE)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram(counts, "other", h_interpolation="pchip",
+        Digest2Component(counts, "other", h_interpolation="pchip",
                          h_top_bin_infinite=True)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+        Digest2Component.neo_other_pair(MODEL_PATH, "All",
                                         h_interpolation="pchip",
                                         h_top_bin_infinite=True)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+        Digest2Component.from_classes(MODEL_PATH, ["MB1"], "other",
                                       h_interpolation="pchip",
                                       h_top_bin_infinite=True)
     # each alone is fine
-    assert Digest2Histogram(counts, "other",
+    assert Digest2Component(counts, "other",
                             h_interpolation="pchip").h_coeffs is not None
-    assert Digest2Histogram(counts, "other",
+    assert Digest2Component(counts, "other",
                             h_top_bin_infinite=True).h_coeffs is None
 
 
 @pytest.mark.parametrize("bad", ["linear", "cubic", "spline", "None", "",
                                  "PCHIP", "pchip "])
 def test_unknown_h_interpolation_names_the_valid_options(bad):
-    from pneo.population import H_INTERPOLATIONS
+    from pneo.models.digest2 import H_INTERPOLATIONS
 
     with pytest.raises(ValueError) as ei:
-        Digest2Histogram(np.zeros(MODEL_SHAPE), "other", h_interpolation=bad)
+        Digest2Component(np.zeros(MODEL_SHAPE), "other", h_interpolation=bad)
     msg = str(ei.value)
     assert repr(bad) in msg
     for opt in H_INTERPOLATIONS:
@@ -1713,22 +1713,22 @@ def test_unknown_h_interpolation_names_the_valid_options(bad):
 
 def test_h_interpolation_passes_through_the_factories():
     for mode in ("none", "pchip"):
-        pair = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+        pair = Digest2Component.neo_other_pair(MODEL_PATH, "All",
                                                h_interpolation=mode)
         assert [c.h_interpolation for c in pair] == [mode, mode]
         assert all((c.h_coeffs is None) == (mode == "none") for c in pair)
-        one = Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+        one = Digest2Component.from_classes(MODEL_PATH, ["MB1"], "other",
                                             h_interpolation=mode)
         assert one.h_interpolation == mode
     # the default is the D-10 histogram everywhere
     assert [c.h_interpolation for c in
-            Digest2Histogram.neo_other_pair(MODEL_PATH, "All")] \
+            Digest2Component.neo_other_pair(MODEL_PATH, "All")] \
         == ["none", "none"]
-    assert Digest2Histogram(np.zeros(MODEL_SHAPE), "x").h_interpolation == "none"
+    assert Digest2Component(np.zeros(MODEL_SHAPE), "x").h_interpolation == "none"
     assert "h_interpolation='pchip'" in repr(
-        Digest2Histogram(np.zeros(MODEL_SHAPE), "x", h_interpolation="pchip")
+        Digest2Component(np.zeros(MODEL_SHAPE), "x", h_interpolation="pchip")
     )
-    assert "h_interpolation" not in repr(Digest2Histogram(np.zeros(MODEL_SHAPE), "x"))
+    assert "h_interpolation" not in repr(Digest2Component(np.zeros(MODEL_SHAPE), "x"))
 
 
 def test_pchip_coefficient_table_is_read_only_and_small(pair_pchip):
@@ -1744,7 +1744,7 @@ def test_pchip_coefficient_table_is_read_only_and_small(pair_pchip):
 
 def test_full_qei_interpolation_is_still_refused_and_points_at_the_h_knob():
     with pytest.raises(NotImplementedError) as ei:
-        Digest2Histogram(np.zeros(MODEL_SHAPE), "other", interpolate=True)
+        Digest2Component(np.zeros(MODEL_SHAPE), "other", interpolate=True)
     assert "h_interpolation='pchip'" in str(ei.value)
 
 
@@ -1755,7 +1755,7 @@ def test_pchip_mode_documents_what_it_does_not_fix():
     the 1/(e sin i) integrable singularity — that lives on the e and i bin
     edges and is a property of the measure, not of the H reconstruction.
     """
-    doc = __import__("pneo.population", fromlist=["x"]).__doc__
+    doc = __import__("pneo.models.digest2", fromlist=["x"]).__doc__
     assert "e sin i" in doc
     assert "staircase" in doc
     assert "cumulative" in doc
@@ -1780,24 +1780,24 @@ H_TOP_WIDTH_REF = 25.5 - 24.0
 
 @pytest.fixture(scope="module")
 def ext_pair():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT)
+    return Digest2Component.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT)
 
 
 @pytest.fixture(scope="module")
 def ext_pchip_pair():
-    return Digest2Histogram.neo_other_pair(
+    return Digest2Component.neo_other_pair(
         MODEL_PATH, "All", h_extend_to=H_EXT, h_interpolation="pchip"
     )
 
 
 @pytest.fixture(scope="module")
 def plain_pair():
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, "All")
+    return Digest2Component.neo_other_pair(MODEL_PATH, "All")
 
 
 @pytest.fixture(scope="module")
 def pchip_pair():
-    return Digest2Histogram.neo_other_pair(
+    return Digest2Component.neo_other_pair(
         MODEL_PATH, "All", h_interpolation="pchip"
     )
 
@@ -1815,18 +1815,18 @@ def test_h_extend_to_validation():
     counts = np.zeros(MODEL_SHAPE)
     for bad in (25.5, 25.0, 0.0, -1.0):
         with pytest.raises(ValueError, match="h_extend_to"):
-            Digest2Histogram(counts, "other", h_extend_to=bad)
+            Digest2Component(counts, "other", h_extend_to=bad)
     for bad in (float("inf"), float("nan"), float("-inf")):
         with pytest.raises(ValueError, match="finite"):
-            Digest2Histogram(counts, "other", h_extend_to=bad)
+            Digest2Component(counts, "other", h_extend_to=bad)
     # The smallest legal value is the next double above 25.5.
     tiny = np.nextafter(25.5, np.inf)
-    c = Digest2Histogram(counts, "other", h_extend_to=tiny)
+    c = Digest2Component(counts, "other", h_extend_to=tiny)
     assert c.h_extend_to == tiny
     # None is the default and is not the string "None".
-    assert Digest2Histogram(counts, "other").h_extend_to is None
+    assert Digest2Component(counts, "other").h_extend_to is None
     # ints are accepted and normalized to float
-    assert Digest2Histogram(counts, "other", h_extend_to=30).h_extend_to == 30.0
+    assert Digest2Component(counts, "other", h_extend_to=30).h_extend_to == 30.0
 
 
 @pytest.mark.parametrize("interp", ["none", "pchip"])
@@ -1836,41 +1836,41 @@ def test_h_extend_to_and_the_d14_clamp_are_mutually_exclusive(interp):
     kw = dict(h_interpolation=interp) if interp != "none" else {}
     # h_extend_to first, clamp second
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram(counts, "other", h_extend_to=H_EXT,
+        Digest2Component(counts, "other", h_extend_to=H_EXT,
                          h_top_bin_infinite=True, **kw)
     # clamp first, h_extend_to second (kwargs are order-independent in Python,
     # so this checks the *guard* is unconditional rather than the call order)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram(counts, "other", h_top_bin_infinite=True,
+        Digest2Component(counts, "other", h_top_bin_infinite=True,
                          h_extend_to=H_EXT, **kw)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT,
+        Digest2Component.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT,
                                         h_top_bin_infinite=True, **kw)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram.from_classes(MODEL_PATH, ["MB1"], "other",
+        Digest2Component.from_classes(MODEL_PATH, ["MB1"], "other",
                                       h_top_bin_infinite=True,
                                       h_extend_to=H_EXT, **kw)
     # A bad *value* is reported as a bad value, not as a mode conflict, even
     # when the clamp is also set (validation runs first).
     with pytest.raises(ValueError, match="finite"):
-        Digest2Histogram(counts, "other", h_extend_to=float("inf"),
+        Digest2Component(counts, "other", h_extend_to=float("inf"),
                          h_top_bin_infinite=True)
 
 
 def test_h_extend_to_passes_through_the_factories():
-    pair = Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT)
+    pair = Digest2Component.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT)
     assert [c.h_extend_to for c in pair] == [H_EXT, H_EXT]
     assert all(c.shape == MODEL_SHAPE[:3] + (MODEL_SHAPE[3] + 1,) for c in pair)
     assert [c.h_extend_to for c in
-            Digest2Histogram.neo_other_pair(MODEL_PATH, "All")] == [None, None]
-    one = Digest2Histogram.from_classes(MODEL_PATH, ["NEO"], "NEO",
+            Digest2Component.neo_other_pair(MODEL_PATH, "All")] == [None, None]
+    one = Digest2Component.from_classes(MODEL_PATH, ["NEO"], "NEO",
                                         h_extend_to=H_EXT)
     assert one.h_extend_to == H_EXT
-    assert Digest2Histogram.from_classes(
+    assert Digest2Component.from_classes(
         MODEL_PATH, ["NEO"], "NEO").h_extend_to is None
     assert f"h_extend_to={H_EXT!r}" in repr(one)
     assert "h_extend_to" not in repr(
-        Digest2Histogram.from_classes(MODEL_PATH, ["NEO"], "NEO"))
+        Digest2Component.from_classes(MODEL_PATH, ["NEO"], "NEO"))
 
 
 def test_extension_support_and_edges(ext_pair):
@@ -1985,9 +1985,9 @@ def test_extension_leaves_the_model_below_the_wall_bit_identical(interp):
     is unaffected (asserted separately); its shape is not, and this test pins
     both halves of that statement so the qualifier cannot rot.
     """
-    plain = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+    plain = Digest2Component.neo_other_pair(MODEL_PATH, "All",
                                             h_interpolation=interp)
-    ext = Digest2Histogram.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT,
+    ext = Digest2Component.neo_other_pair(MODEL_PATH, "All", h_extend_to=H_EXT,
                                           h_interpolation=interp)
     rng = np.random.default_rng(20260902)
     el3, h = _random_qeih(200_000, rng, h_lo=-1.0, h_hi=H_TOP_REF)
@@ -2055,7 +2055,7 @@ def test_extension_conserves_mass_including_the_synthetic_bin(interp):
     counts[3, 1, 2, 5] = 0.0
     counts[3, 1, 2, 6] = 0.0
     counts[3, 1, 2, -1] = 1234.0
-    c = Digest2Histogram(counts, "other", h_extend_to=H_EXT,
+    c = Digest2Component(counts, "other", h_extend_to=H_EXT,
                          h_interpolation=interp)
     got = _mass_by_bin(c, n_sub=2001)[3, 1, 2]
     want = np.asarray(c.counts)[3, 1, 2]
@@ -2092,7 +2092,7 @@ def test_extension_conserves_mass_including_the_synthetic_bin(interp):
         ])
         assert vals.min() > 0.0
         assert np.ptp(vals) <= 1e-12 * vals.max()
-        flat = Digest2Histogram(counts, "other", h_extend_to=H_EXT)
+        flat = Digest2Component(counts, "other", h_extend_to=H_EXT)
         assert vals[0] == pytest.approx(
             flat.density(el3, np.array([26.0]))[0], rel=1e-12
         )
@@ -2111,8 +2111,8 @@ def test_extension_pchip_conserves_the_top_bin_mass_exactly():
     rng = np.random.default_rng(11)
     counts = np.zeros(MODEL_SHAPE)
     counts[3, 1, 2, :] = rng.integers(0, 500, MODEL_SHAPE[3])
-    plain = Digest2Histogram(counts, "other", h_interpolation="pchip")
-    ext = Digest2Histogram(counts, "other", h_extend_to=H_EXT,
+    plain = Digest2Component(counts, "other", h_interpolation="pchip")
+    ext = Digest2Component(counts, "other", h_extend_to=H_EXT,
                            h_interpolation="pchip")
     cell_vol = float(np.asarray(plain.qei_volume)[3, 1, 2]) * ANGLE_VOLUME
     for c in (plain, ext):
@@ -2151,11 +2151,11 @@ def test_extended_component_is_samplable_at_the_expected_rate(interp):
     """sample() needs no special case, and the draw rate above 25.5 is the
     extension's mass fraction — which is what makes extended mode
     gate-eligible (the D-14 clamp raises here instead)."""
-    neo, other = Digest2Histogram.neo_other_pair(
+    neo, other = Digest2Component.neo_other_pair(
         MODEL_PATH, "All", h_extend_to=H_EXT, h_interpolation=interp
     )
     for c in (neo, other):
-        base = Digest2Histogram.neo_other_pair(
+        base = Digest2Component.neo_other_pair(
             MODEL_PATH, "All", h_interpolation=interp
         )[0 if c.label == "NEO" else 1]
         expect = 1.0 - base.total_count / c.total_count
@@ -2169,7 +2169,7 @@ def test_extended_component_is_samplable_at_the_expected_rate(interp):
         if c.label == "NEO":
             assert expect == pytest.approx(0.6261, abs=1e-3)
     # and the clamp still refuses, so the two modes cannot be confused
-    clamped = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+    clamped = Digest2Component.neo_other_pair(MODEL_PATH, "All",
                                               h_top_bin_infinite=True)[0]
     with pytest.raises(NotImplementedError, match="h_top_bin_infinite"):
         clamped.sample(1, np.random.default_rng(0))
@@ -2178,7 +2178,7 @@ def test_extended_component_is_samplable_at_the_expected_rate(interp):
 def test_extended_sample_histogram_reproduces_the_extended_model():
     """The §4.1 generator property, on the extended support: sampled H bins
     converge to the extended counts, synthetic bin included."""
-    neo = Digest2Histogram.neo_other_pair(MODEL_PATH, "All",
+    neo = Digest2Component.neo_other_pair(MODEL_PATH, "All",
                                           h_extend_to=H_EXT)[0]
     n = 600_000
     el6, h = neo.sample(n, np.random.default_rng(31337))

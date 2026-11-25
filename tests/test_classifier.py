@@ -46,7 +46,7 @@ from pneo.classifier import (
     classify_many,
 )
 from pneo.constants import G_SLOPE_DEFAULT, OBLIQUITY_J2000
-from pneo.population import Digest2Histogram, PopulationDensity
+from pneo.models.digest2 import Digest2Component, PopulationComponent
 from pneo.ranging import RangingGrid, admissible_rhodot_interval, build_grid
 from pneo.transforms import (
     absolute_magnitude,
@@ -138,7 +138,7 @@ def opposition_tracklet(rate_deg_per_day: float, v_mag: float, R_obs=None):
 def d2pair():
     if not os.path.exists(MODEL_PATH):  # pragma: no cover
         pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
-    return Digest2Histogram.neo_other_pair(MODEL_PATH)
+    return Digest2Component.neo_other_pair(MODEL_PATH)
 
 
 @pytest.fixture(scope="module")
@@ -151,12 +151,12 @@ def obs():
 # ---------------------------------------------------------------------------
 
 
-class BoxDensity(PopulationDensity):
+class BoxDensity(PopulationComponent):
     """Uniform density inside an (x, e, i, H) box, zero outside.
 
     ``x`` is q or a depending on ``parameterization``.  The amplitude is the
     full 7-D density (uniform angles already folded in), matching the
-    PopulationDensity contract, so no extra (2 pi)^-3 appears anywhere.
+    PopulationComponent contract, so no extra (2 pi)^-3 appears anywhere.
     """
 
     def __init__(self, label, parameterization, x, e, i, H, amplitude):
@@ -192,7 +192,7 @@ class BoxDensity(PopulationDensity):
         return {key: self._x, "e": self._e, "i": self._i, "H": self._H}
 
 
-class ConstantDensity(PopulationDensity):
+class ConstantDensity(PopulationComponent):
     """Returns the same value for every input, finite or not.
 
     Used to prove the classifier's masking, not the density's: if a masked
@@ -1298,9 +1298,9 @@ def test_posterior_helper_gates_the_policy_on_the_mechanism():
 def test_h_support_end_is_the_pair_level_boundary():
     from pneo.classifier import h_support_end
 
-    trunc = Digest2Histogram.neo_other_pair(MODEL_PATH)
-    ext = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=30.0)
-    clamp = Digest2Histogram.neo_other_pair(MODEL_PATH,
+    trunc = Digest2Component.neo_other_pair(MODEL_PATH)
+    ext = Digest2Component.neo_other_pair(MODEL_PATH, h_extend_to=30.0)
+    clamp = Digest2Component.neo_other_pair(MODEL_PATH,
                                             h_top_bin_infinite=True)
     assert h_support_end(*trunc) == 25.5
     assert h_support_end(*ext) == 30.0
@@ -1519,7 +1519,7 @@ def test_policy_assigned_one_is_distinguishable_from_a_real_one(obs):
     assert real.policy_assigned is False
     assert real.lambda_neo > 0.0
 
-    d2 = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    d2 = Digest2Component.neo_other_pair(MODEL_PATH)
     att2, R2, V2, kw = _fully_truncated_case()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -1610,13 +1610,13 @@ def test_the_h_extension_removes_the_need_for_the_policy(interp):
     R, V = _observer()
     att = opposition_tracklet(0.3, 26.5, R_obs=R)
     kw = dict(rho_min=0.3, rho_max=0.8, n_rho=400, n_rhodot=50)
-    trunc = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    trunc = Digest2Component.neo_other_pair(MODEL_PATH)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         a = classify(att, *trunc, R_obs=R, V_obs=V, backend="python", **kw)
     assert a.policy_assigned
 
-    ext = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=30.0,
+    ext = Digest2Component.neo_other_pair(MODEL_PATH, h_extend_to=30.0,
                                           h_interpolation=interp)
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)

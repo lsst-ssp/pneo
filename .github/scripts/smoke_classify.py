@@ -50,7 +50,7 @@ from astropy.time import Time  # noqa: E402
 import pneo  # noqa: E402
 from pneo import Attributable, classify  # noqa: E402
 from pneo.backend import core_available, resolve_backend  # noqa: E402
-from pneo.population import Digest2Histogram  # noqa: E402
+from pneo.models.digest2 import Digest2Component  # noqa: E402
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "rust"
 if mode not in ("rust", "python"):
@@ -97,8 +97,8 @@ neo_counts = np.zeros(shape)
 neo_counts[:6] = rng.random((6,) + shape[1:]) * 1e3
 other_counts = np.zeros(shape)
 other_counts[4:] = rng.random((shape[0] - 4,) + shape[1:]) * 1e5
-neo = Digest2Histogram(neo_counts, "NEO")
-other = Digest2Histogram(other_counts, "other")
+neo = Digest2Component(neo_counts, "NEO")
+other = Digest2Component(other_counts, "other")
 
 att = Attributable(
     ra=1.9,

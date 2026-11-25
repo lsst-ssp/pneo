@@ -104,7 +104,7 @@ fn hist_from_py(
         None => None,
         Some(arr) => {
             // The D-14 clamp and the smooth reconstruction are mutually
-            // exclusive on the Python side too (`Digest2Histogram.__init__`
+            // exclusive on the Python side too (`Digest2Component.__init__`
             // raises); repeated here so the kernel cannot be driven into a
             // state the reference cannot express.
             if h_top_bin_infinite {
@@ -156,7 +156,7 @@ fn hist_from_py(
     })
 }
 
-/// Rust-owned copy of a `Digest2Histogram` NEO/other pair.
+/// Rust-owned copy of a `Digest2Component` NEO/other pair.
 ///
 /// Built once per process from the flattened density tables and the four shared
 /// bin-edge arrays.  Rust owns a *copy* of everything, so the numpy arrays
@@ -176,20 +176,20 @@ pub struct CoreModel {
 impl CoreModel {
     /// Build the handle.
     ///
-    /// Parameters mirror `Digest2Histogram`: `*_table` are the components'
+    /// Parameters mirror `Digest2Component`: `*_table` are the components'
     /// `_density_table` arrays flattened in C order, `*_edges` the shared
     /// `(q, e, i[rad], H)` bin edges, `*_parameterization` is `"qei"`/`"aei"`
     /// and `*_h_top_bin_infinite` selects the D-14 digest2-emulation clamp.
     ///
     /// The bin shape is taken from `dims` and the axis lengths from the edge
     /// arrays, so the D-19 finite H extension
-    /// (`Digest2Histogram(h_extend_to=...)`) arrives here as nothing more than
+    /// (`Digest2Component(h_extend_to=...)`) arrives here as nothing more than
     /// `dims.3 == 19` with a 20-long `h_edges` — Python builds the extended
     /// arrays before the handoff and this constructor needs no knowledge of the
     /// mode.  See `model.rs`'s header.
     ///
     /// `*_h_coeffs` are the optional smooth-in-H Horner coefficients
-    /// (`Digest2Histogram.h_coeffs` flattened C-order, 3 per (cell, H bin)).
+    /// (`Digest2Component.h_coeffs` flattened C-order, 3 per (cell, H bin)).
     /// When a component supplies them they *replace* its table inside
     /// `density`; the table is still required and still validated, so a handle
     /// always carries the piecewise-constant model that was reconstructed.
@@ -259,7 +259,7 @@ impl CoreModel {
     /// Evaluate both components' densities at explicit `(q|a, e, i, H)` tuples.
     ///
     /// Exposed for the bit-exactness tests against
-    /// `Digest2Histogram.density`; the kernel itself calls the same lookup
+    /// `Digest2Component.density`; the kernel itself calls the same lookup
     /// inline.  The first column of `elements3` is interpreted per component
     /// (`q` for a "qei" component, `a` for "aei"), exactly as in the kernel.
     fn density_at<'py>(

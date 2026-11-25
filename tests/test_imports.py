@@ -6,7 +6,7 @@ import pneo
 def test_imports():
     assert pneo.__version__
     assert pneo.Attributable is not None
-    assert pneo.PopulationDensity is not None
+    assert pneo.PopulationComponent is not None
 
 
 def test_constants():

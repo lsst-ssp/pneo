@@ -41,12 +41,12 @@ from pneo.attributable import Attributable
 from pneo.backend import core_available, resolve_backend
 from pneo.classifier import classify
 from pneo.constants import MU_SUN
-from pneo.population import (
+from pneo.models.digest2 import (
     E_EDGES,
     H_EDGES,
     I_EDGES,
     Q_EDGES,
-    Digest2Histogram,
+    Digest2Component,
 )
 from pneo.ranging import admissible_rhodot_interval
 
@@ -88,14 +88,14 @@ def _isolate_backend_env(monkeypatch):
 def d2pair():
     if not os.path.exists(MODEL_PATH):  # pragma: no cover
         pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
-    return Digest2Histogram.neo_other_pair(MODEL_PATH)
+    return Digest2Component.neo_other_pair(MODEL_PATH)
 
 
 @pytest.fixture(scope="module")
 def clamped_pair():
     if not os.path.exists(MODEL_PATH):  # pragma: no cover
         pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, h_top_bin_infinite=True)
+    return Digest2Component.neo_other_pair(MODEL_PATH, h_top_bin_infinite=True)
 
 
 @pytest.fixture(scope="module")
@@ -157,7 +157,7 @@ def _synthetic_corners():
 )
 def test_bin_index_is_bit_exact(core, edges_name):
     """`_core.bin_index` reproduces `population._bin_index` exactly."""
-    from pneo.population import _bin_index
+    from pneo.models.digest2 import _bin_index
 
     edges = {"q": Q_EDGES, "e": E_EDGES, "i": I_EDGES, "h": H_EDGES}[edges_name]
     rng = np.random.default_rng(7)
@@ -183,7 +183,7 @@ def test_bin_index_is_bit_exact(core, edges_name):
 
 @pytest.mark.parametrize("clamp", [False, True])
 def test_density_lookup_is_bit_exact(core, clamp):
-    """The Rust density equals `Digest2Histogram.density` bit for bit.
+    """The Rust density equals `Digest2Component.density` bit for bit.
 
     Probes hit every bin edge from both sides plus the D-14 clamp branch
     (H >= 25.5 -> top bin when clamped, 0 otherwise), +/-inf and NaN.
@@ -191,8 +191,8 @@ def test_density_lookup_is_bit_exact(core, clamp):
     rng = np.random.default_rng(11)
     counts = rng.random((29, 8, 11, 18)) * 1e4
     counts[counts < 3e3] = 0.0  # keep genuinely empty bins in the mix
-    neo = Digest2Histogram(counts, "NEO", h_top_bin_infinite=clamp)
-    other = Digest2Histogram(
+    neo = Digest2Component(counts, "NEO", h_top_bin_infinite=clamp)
+    other = Digest2Component(
         counts[::-1].copy(), "other", h_top_bin_infinite=clamp
     )
     from pneo.backend import core_model_for
@@ -799,7 +799,7 @@ def test_existing_wp5_test_on_both_backends(backend, name, d2pair):
 def pchip_pair():
     if not os.path.exists(MODEL_PATH):  # pragma: no cover
         pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, h_interpolation="pchip")
+    return Digest2Component.neo_other_pair(MODEL_PATH, h_interpolation="pchip")
 
 
 @needs_model
@@ -858,7 +858,7 @@ def test_pchip_density_lookup_is_bit_exact(core, pchip_pair):
     # Not vacuous, and genuinely the smooth branch: in-support values must be
     # present and must differ from the piecewise-constant model.
     assert (want_neo > 0.0).any() and (want_neo == 0.0).any()
-    hist_neo, hist_other = Digest2Histogram.neo_other_pair(MODEL_PATH)
+    hist_neo, hist_other = Digest2Component.neo_other_pair(MODEL_PATH)
     assert not np.array_equal(want_neo, hist_neo.density(el3, h))
     assert not np.array_equal(want_other, hist_other.density(el3, h))
 
@@ -979,13 +979,13 @@ def test_core_model_rejects_bad_coefficient_arrays(core, d2pair):
     with pytest.raises(core.UnsupportedModel, match="finite"):
         build(other_h_coeffs=bad)
     # D-14 clamp + smooth reconstruction: refused on both sides, matching
-    # Digest2Histogram's own ValueError.
+    # Digest2Component's own ValueError.
     with pytest.raises(core.UnsupportedModel, match="h_top_bin_infinite"):
         build(neo_h_coeffs=good, neo_h_top_bin_infinite=True)
     with pytest.raises(core.UnsupportedModel, match="h_top_bin_infinite"):
         build(other_h_coeffs=good, other_h_top_bin_infinite=True)
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram.neo_other_pair(MODEL_PATH, h_interpolation="pchip",
+        Digest2Component.neo_other_pair(MODEL_PATH, h_interpolation="pchip",
                                         h_top_bin_infinite=True)
 
 
@@ -994,7 +994,7 @@ def test_mixed_mode_guard_does_not_fire_on_matched_or_unaware_components(
     """The guard is about the paired flags only, and defaults to "matched".
 
     A component that has never heard of either knob (a custom
-    `PopulationDensity`) must pair with anything, since `getattr` defaults
+    `PopulationComponent`) must pair with anything, since `getattr` defaults
     stand in for both flags; and differing `label`/`variant`/`parameterization`
     are NOT the guard's business.
     """
@@ -1031,14 +1031,14 @@ H_EXT = 30.0
 def ext_pair():
     if not os.path.exists(MODEL_PATH):  # pragma: no cover
         pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
-    return Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT)
+    return Digest2Component.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT)
 
 
 @pytest.fixture(scope="module")
 def ext_pchip_pair():
     if not os.path.exists(MODEL_PATH):  # pragma: no cover
         pytest.skip(f"digest2 model file not found: {MODEL_PATH}")
-    return Digest2Histogram.neo_other_pair(
+    return Digest2Component.neo_other_pair(
         MODEL_PATH, h_extend_to=H_EXT, h_interpolation="pchip"
     )
 
@@ -1124,7 +1124,7 @@ def test_two_reaches_do_not_share_a_cached_core_model(core, ext_pair):
     from pneo.backend import _fingerprint, core_model_for
 
     neo30, other30 = ext_pair
-    neo40, other40 = Digest2Histogram.neo_other_pair(MODEL_PATH,
+    neo40, other40 = Digest2Component.neo_other_pair(MODEL_PATH,
                                                      h_extend_to=40.0)
     # The premise: the tables really are indistinguishable.
     assert np.array_equal(neo30._density_table, neo40._density_table)
@@ -1148,14 +1148,14 @@ def test_extended_and_clamped_are_mutually_exclusive_in_the_kernel_too(core):
     such a pair — asserted here so a future change to `_build_core_model`
     cannot open the door quietly."""
     with pytest.raises(ValueError, match="h_top_bin_infinite"):
-        Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT,
+        Digest2Component.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT,
                                         h_top_bin_infinite=True)
     # And a hand-built CoreModel with the clamp on an extended axis is at
     # least self-consistent about which mode it is in: the clamp maps H above
     # the LAST edge into the last bin, which is the synthetic one.  This is
     # unreachable from Python and is documented as such; the assertion records
     # what the kernel would do rather than pretending it cannot happen.
-    hist = Digest2Histogram.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT)[0]
+    hist = Digest2Component.neo_other_pair(MODEL_PATH, h_extend_to=H_EXT)[0]
     cm = core.CoreModel(
         np.ascontiguousarray(hist._density_table.reshape(-1)),
         np.ascontiguousarray(hist._density_table.reshape(-1)),

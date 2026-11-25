@@ -60,7 +60,7 @@ from .ingest import (
     ingest,
 )
 from .paths import default_model_path, default_obscodes_path
-from .population import D2_VARIANTS, H_INTERPOLATIONS
+from .models.digest2 import D2_VARIANTS, H_INTERPOLATIONS
 
 __all__ = ["main", "resolve_model", "OUTPUT_COLUMNS", "MODEL_ENV_VAR"]
 
@@ -194,10 +194,10 @@ def resolve_model(flag: str | None = None) -> str:
 
 def _load_pair(model: str, variant: str, h_extend_to, h_interpolation: str):
     """Build the (NEO, other) component pair, with clean errors for bad knobs."""
-    from .population import Digest2Histogram
+    from .models.digest2 import Digest2Component
 
     try:
-        return Digest2Histogram.neo_other_pair(
+        return Digest2Component.neo_other_pair(
             model,
             variant,
             h_extend_to=h_extend_to,
@@ -233,9 +233,9 @@ def _init_worker(model, variant, h_extend_to, h_interpolation, cfg) -> None:
     the ``--workers 1`` path no longer calls this function: it reuses the pair
     the parent already built.)
     """
-    from .population import Digest2Histogram
+    from .models.digest2 import Digest2Component
 
-    neo, other = Digest2Histogram.neo_other_pair(
+    neo, other = Digest2Component.neo_other_pair(
         model, variant, h_extend_to=h_extend_to,
         h_interpolation=h_interpolation,
     )

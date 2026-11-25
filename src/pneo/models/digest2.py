@@ -87,7 +87,7 @@ where the two codes consume *different* effective models on identical inputs,
 which breaks the DESIGN §4.2 "same inputs" premise for any tracklet with
 appreciable admissible-region measure at implied H > 25.5 (64.5% of the
 gate_v0 catalogue at the > 1e-2 threshold).  To turn that confound into a
-measurement, :class:`Digest2Histogram` takes ``h_top_bin_infinite=True``,
+measurement, :class:`Digest2Component` takes ``h_top_bin_infinite=True``,
 which reinstates digest2's clamp for the **upper** half of deviation 1 only:
 H >= 25.5 returns the top bin's density (per unit H, the value unchanged)
 instead of 0.  Everything else — q/e/i truncation, and H < 0 — is untouched.
@@ -283,13 +283,13 @@ from __future__ import annotations
 
 import csv
 import os
-from abc import ABC, abstractmethod
 
 import numpy as np
 
+from ._base import PopulationComponent
+
 __all__ = [
-    "PopulationDensity",
-    "Digest2Histogram",
+    "Digest2Component",
     "read_digest2_model",
     "QPART",
     "EPART",
@@ -304,64 +304,6 @@ __all__ = [
     "D2_VARIANTS",
     "H_INTERPOLATIONS",
 ]
-
-
-class PopulationDensity(ABC):
-    """An absolutely calibrated population density n_C(elements, H).
-
-    The load-bearing abstraction of pneo (DESIGN §3): the classifier is
-    generic over implementations of this interface.
-    """
-
-    #: Element parameterization the density is expressed in: "qei" or "aei".
-    #: The classifier applies the matching reparameterization Jacobian.
-    parameterization: str
-
-    #: Class label: "NEO" or "other".
-    label: str
-
-    @abstractmethod
-    def density(self, elements3: np.ndarray, H: np.ndarray) -> np.ndarray:
-        """Number density at (elements3, H).
-
-        Parameters
-        ----------
-        elements3 : (..., 3) array in this density's parameterization —
-            (q, e, i) or (a, e, i) [AU, -, rad]. Angular elements
-            (Omega, omega, M) are uniform by convention in v0; the returned
-            density is per unit (elements3, H) volume with the uniform-angle
-            factor 1/(2 pi)^3 ALREADY INCLUDED, i.e. it is the full 7D density
-            n(elements3, Omega, omega, M, H) which happens not to depend on
-            the angles. Units: objects per unit
-            q [AU] x e [-] x i [rad] x Omega, omega, M [rad^3] x H [mag],
-            i.e. objects / (AU * rad^4 * mag).
-            (WP0 contract amendment, authorized by the supervisor after the
-            WP4 review: the original wording read "AU * rad * mag", which
-            omitted the three angular dimensions carried by the included
-            1/(2 pi)^3 factor.)
-        H : (...,) absolute magnitudes.
-
-        Returns
-        -------
-        (...,) densities; exactly 0.0 outside the declared support [D-4].
-        """
-
-    @abstractmethod
-    def sample(self, n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-        """Draw n objects from the density.
-
-        Returns
-        -------
-        (elements6, H) : elements6 is (n, 6) full (a, e, i, Omega, omega, M)
-        with the three angles drawn uniformly in [0, 2 pi) (i converted from
-        the parameterization as needed); H is (n,). This is the §4.1
-        test-population generator.
-        """
-
-    @property
-    @abstractmethod
-    def support(self) -> dict[str, tuple[float, float]]:
-        """Declared support: {"q"|"a": (lo, hi), "e": ..., "i": ..., "H": (lo, hi)}."""
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +562,7 @@ def read_digest2_model(
     return tables
 
 
-#: Valid values of ``Digest2Histogram(h_interpolation=...)``.
+#: Valid values of ``Digest2Component(h_interpolation=...)``.
 #:
 #: ``"none"``   piecewise-constant in H (the D-10 default; digest2's own rule).
 #: ``"pchip"``  monotone-cubic reconstruction of the cumulative count in H,
@@ -863,7 +805,7 @@ def _bin_index(edges: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray
     return np.clip(idx, 0, nbins - 1), ok
 
 
-class Digest2Histogram(PopulationDensity):
+class Digest2Component(PopulationComponent):
     """The MPC digest2 (q, e, i, H) binned population model (D-10).
 
     Density over the digest2 bin structure; uniform angles; absolute
@@ -963,7 +905,7 @@ class Digest2Histogram(PopulationDensity):
             bins — *counts*, not the raw CSV cells (see module docstring);
             use :func:`read_digest2_model` or :meth:`neo_other_pair` to get
             them.
-        label : "NEO" or "other" (the PopulationDensity class label).
+        label : "NEO" or "other" (the PopulationComponent class label).
         variant : "All" or "Unk", carried for provenance.
         classes : provenance string describing the class aggregation.
         interpolate : must be False.  Full (q, e, i, H) interpolation is not
@@ -1004,7 +946,7 @@ class Digest2Histogram(PopulationDensity):
         """
         if interpolate:
             raise NotImplementedError(
-                "Digest2Histogram(interpolate=True) — full (q, e, i, H) "
+                "Digest2Component(interpolate=True) — full (q, e, i, H) "
                 "interpolation is not implemented: interpolating in q/e/i "
                 "near empty cells invents density with nothing to pin it "
                 "down. The implemented reconstruction is H-only and "
@@ -1150,7 +1092,7 @@ class Digest2Histogram(PopulationDensity):
         h_top_bin_infinite: bool = False,
         h_interpolation: str = "none",
         h_extend_to: float | None = None,
-    ) -> tuple["Digest2Histogram", "Digest2Histogram"]:
+    ) -> tuple["Digest2Component", "Digest2Component"]:
         """Load the model file and return (neo, other) components.
 
         neo = digest2's NEO orbit class(es); other = all remaining classes,
@@ -1221,7 +1163,7 @@ class Digest2Histogram(PopulationDensity):
         h_top_bin_infinite: bool = False,
         h_interpolation: str = "none",
         h_extend_to: float | None = None,
-    ) -> "Digest2Histogram":
+    ) -> "Digest2Component":
         """Aggregate named digest2 classes into one component (diagnostics).
 
         ``classes`` and ``subtract`` are iterables of names from
@@ -1276,7 +1218,7 @@ class Digest2Histogram(PopulationDensity):
         return ih, ok_h
 
     def density(self, elements3: np.ndarray, H: np.ndarray) -> np.ndarray:
-        """Number density; see PopulationDensity.density.
+        """Number density; see PopulationComponent.density.
 
         ``elements3`` is (..., 3) = (q [AU], e [-], i [rad]); ``H`` is (...,)
         [mag].  Units of the result: objects / (AU * rad^4 * mag), i.e. per
@@ -1340,7 +1282,7 @@ class Digest2Histogram(PopulationDensity):
         return out
 
     def sample(self, n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-        """Draw n objects; see PopulationDensity.sample.
+        """Draw n objects; see PopulationComponent.sample.
 
         Bins are drawn with probability proportional to their object count;
         (q, e, i, H) are uniform within the chosen bin (which is exactly the
@@ -1396,7 +1338,7 @@ class Digest2Histogram(PopulationDensity):
         """
         if self.h_top_bin_infinite:
             raise NotImplementedError(
-                "cannot sample a Digest2Histogram built with "
+                "cannot sample a Digest2Component built with "
                 "h_top_bin_infinite=True: with the top H bin treated as "
                 "[24, inf) the density is constant in H above 25.5, so its "
                 "integral diverges and it is not a normalizable probability "
@@ -1690,7 +1632,7 @@ class Digest2Histogram(PopulationDensity):
             if self.h_extend_to is not None else ""
         )
         return (
-            f"Digest2Histogram(label={self.label!r}, variant={self.variant!r}, "
+            f"Digest2Component(label={self.label!r}, variant={self.variant!r}, "
             f"classes={self.classes!r}, total_count={self.total_count:.0f}"
             f"{clamp}{interp}{extend})"
         )

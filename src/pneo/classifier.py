@@ -41,7 +41,7 @@ zeroed rather than propagated:
 1. the implied orbit is unbound or degenerate, so `elements_from_state`
    returns a NaN row (or H is non-finite).  Such nodes are excluded *before*
    the density is called, and the density is handed finite dummy values there,
-   so `PopulationDensity` implementations never see NaN.  Counted in
+   so `PopulationComponent` implementations never see NaN.  Counted in
    ``ClassificationResult.n_masked_nonfinite``.
 2. the elements are finite but `ranging_jacobian_det` returns NaN — the
    conditioning guard in WP2 trips near the parabolic boundary.  These nodes
@@ -55,7 +55,7 @@ zeroed rather than propagated:
 Efficiency: the composed Jacobian determinant depends only on the density's
 *parameterization*, not on the density, so it is computed once per distinct
 parameterization in use (one call in the v0 case, where both components are
-`Digest2Histogram` with parameterization "qei").
+`Digest2Component` with parameterization "qei").
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ import numpy as np
 
 from .attributable import Attributable, observer_state
 from .constants import G_SLOPE_DEFAULT
-from .population import PopulationDensity
+from .models.digest2 import PopulationComponent
 from .ranging import RangingGrid, build_grid
 from .transforms import (
     absolute_magnitude,
@@ -510,7 +510,7 @@ def h_support_end(neo, other) -> float:
 
     ``max`` over the pair of each component's ``support["H"][1]``, because
     "outside both supports" needs the *further* of the two boundaries.  For the
-    shipped :class:`~pneo.population.Digest2Histogram` pair this is 25.5,
+    shipped :class:`~pneo.models.digest2.Digest2Component` pair this is 25.5,
     or ``h_extend_to`` under D-19, or ``+inf`` under the D-14 clamp (which
     never runs out of model above 25.5).
 
@@ -826,7 +826,7 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
         warnings.warn(
             "pneo.classify: a marginal likelihood is NaN "
             f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}); "
-            "this indicates a bug in a PopulationDensity implementation. "
+            "this indicates a bug in a PopulationComponent implementation. "
             "P(NEO) is undefined.",
             RuntimeWarning,
             stacklevel=stacklevel,
@@ -835,8 +835,8 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
 
 def classify(
     att: Attributable,
-    neo: PopulationDensity,
-    other: PopulationDensity,
+    neo: PopulationComponent,
+    other: PopulationComponent,
     R_obs: np.ndarray | None = None,
     V_obs: np.ndarray | None = None,
     rho_min: float = 0.01,
@@ -880,7 +880,7 @@ def classify(
         the apparent magnitude ``v_mag`` (Johnson V).  A non-finite ``v_mag``
         is rejected with a ValueError rather than silently producing an empty
         likelihood.
-    neo, other : PopulationDensity
+    neo, other : PopulationComponent
         The two absolutely calibrated components.  Their
         ``parameterization`` attribute selects the reparameterization Jacobian
         applied to each; the determinant is computed once per distinct
@@ -1107,7 +1107,7 @@ def classify(
             det_bad[...] = det_bad | (good & ~np.isfinite(det))
         return det
 
-    def _integrand(density: PopulationDensity) -> np.ndarray:
+    def _integrand(density: PopulationComponent) -> np.ndarray:
         param = getattr(density, "parameterization", None)
         if param not in ("qei", "aei"):
             raise ValueError(
@@ -1188,8 +1188,8 @@ def classify(
 
 def classify_many(
     atts: list[Attributable],
-    neo: PopulationDensity,
-    other: PopulationDensity,
+    neo: PopulationComponent,
+    other: PopulationComponent,
     **kwargs,
 ) -> list[ClassificationResult]:
     """Batch API.
@@ -1272,8 +1272,8 @@ def classify_many(
 
 def _classify_many_rust(
     atts: list[Attributable],
-    neo: PopulationDensity,
-    other: PopulationDensity,
+    neo: PopulationComponent,
+    other: PopulationComponent,
     *,
     _impl,
     n_threads: int | None = None,

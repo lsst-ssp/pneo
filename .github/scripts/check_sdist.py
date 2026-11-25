@@ -34,7 +34,7 @@ REQUIRED = (
     "src/pneo/__init__.py",
     "src/pneo/backend.py",
     "src/pneo/classifier.py",
-    "src/pneo/population.py",
+    "src/pneo/models/digest2.py",
     "rust/Cargo.toml",
     "rust/Cargo.lock",
     "rust/build.sh",

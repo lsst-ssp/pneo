@@ -2,7 +2,7 @@
 
 from .attributable import Attributable, observer_state
 from .classifier import ClassificationResult, classify, classify_many
-from .population import Digest2Histogram, PopulationDensity
+from .models.digest2 import Digest2Component, PopulationComponent
 from .ranging import RangingGrid, admissible_rhodot_interval, build_grid
 
 __all__ = [
@@ -11,8 +11,8 @@ __all__ = [
     "ClassificationResult",
     "classify",
     "classify_many",
-    "Digest2Histogram",
-    "PopulationDensity",
+    "Digest2Component",
+    "PopulationComponent",
     "RangingGrid",
     "admissible_rhodot_interval",
     "build_grid",

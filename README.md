@@ -56,11 +56,11 @@ describes them in more detail.
 
 ```python
 from astropy.time import Time
-from pneo import Attributable, Digest2Histogram, classify
+from pneo import Attributable, Digest2Component, classify
 from pneo.paths import default_model_path
 
 # The population model, as `pneo score` uses it (run `pneo fetch-model` first).
-neo, other = Digest2Histogram.neo_other_pair(default_model_path(), h_extend_to=30.0)
+neo, other = Digest2Component.neo_other_pair(default_model_path(), h_extend_to=30.0)
 
 att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,  # rad, rad/day
                    epoch=Time("2026-03-15T06:00:00"), v_mag=21.0)

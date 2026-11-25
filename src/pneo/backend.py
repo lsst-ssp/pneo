@@ -46,7 +46,7 @@ into an error.
 Limitations of the Rust backend (it falls back to Python unless
 ``backend="rust"`` was passed explicitly):
 
-* both components must be :class:`pneo.population.Digest2Histogram`-shaped,
+* both components must be :class:`pneo.models.digest2.Digest2Component`-shaped,
   i.e. expose a 4-D ``(q, e, i, H)`` density table on the same bin edges.  A
   component in the smooth-in-H mode must additionally expose the matching
   ``h_coeffs``; the kernel evaluates the very same Horner form on the very same
@@ -142,7 +142,7 @@ def strict_rust(backend: str | None = None) -> bool:
     Only an explicit ``backend="rust"`` *argument* is strict.  A
     ``PNEO_BACKEND=rust`` environment variable is a global preference — it
     is meant to flip a whole test run or script onto the kernel, and must not
-    turn a perfectly valid custom :class:`~pneo.population.PopulationDensity`
+    turn a perfectly valid custom :class:`~pneo.models.digest2.PopulationComponent`
     into an error.
     """
     return backend is not None and str(backend).strip().lower() == "rust"
@@ -217,7 +217,7 @@ class ModelNotSupported(TypeError):
 def _table_of(density) -> np.ndarray:
     """The 4-D density table of a histogram component (objects per unit volume).
 
-    Uses ``Digest2Histogram._density_table`` when present; otherwise rebuilds it
+    Uses ``Digest2Component._density_table`` when present; otherwise rebuilds it
     from the public ``counts``/``bin_volume`` pair, which is the same quantity
     by construction.
     """
@@ -272,7 +272,7 @@ def _edges_of(density) -> list[np.ndarray]:
 #: so every faint tracklet would be driven towards 1.0 by the pairing error
 #: alone.  It is a float-or-None rather than a bool/str, which the ``a == b``
 #: test below handles unchanged (``None == None``, and the value is validated
-#: finite by ``Digest2Histogram``, so no NaN can defeat the comparison).
+#: finite by ``Digest2Component``, so no NaN can defeat the comparison).
 _PAIRED_MODE_FLAGS = (
     ("h_interpolation", "none", "the H reconstruction (D-10)"),
     ("h_top_bin_infinite", False, "the digest2-emulation H clamp (D-14)"),
@@ -301,8 +301,8 @@ def check_component_pair(neo, other) -> None:
        ``classifier.classify`` / ``classify_many``; it is recorded here rather
        than worked around, because a guard that fires on one backend and not
        the other would be worse than one whose scope is written down.
-       :meth:`~pneo.population.Digest2Histogram.neo_other_pair` and
-       :meth:`~pneo.population.Digest2Histogram.from_classes` cannot
+       :meth:`~pneo.models.digest2.Digest2Component.neo_other_pair` and
+       :meth:`~pneo.models.digest2.Digest2Component.from_classes` cannot
        produce a mismatched pair, so this is reachable only by pairing two
        separately constructed components by hand.
     """
@@ -322,7 +322,7 @@ def check_component_pair(neo, other) -> None:
             "the mismatch, not a measurement of the knob (measured on "
             "gate_v0: up to 6.4e-3 in p(NEO), the size of the whole honest "
             "mode change). Build the pair with "
-            "Digest2Histogram.neo_other_pair(..., "
+            "Digest2Component.neo_other_pair(..., "
             f"{attr}=...), which cannot produce a mismatch."
         )
 
@@ -338,7 +338,7 @@ def _h_coeffs_of(density) -> np.ndarray | None:
     piecewise-constant table, which would be a different model scored under the
     same name.
     """
-    from .population import H_INTERPOLATIONS
+    from .models.digest2 import H_INTERPOLATIONS
 
     mode = str(getattr(density, "h_interpolation", "none"))
     if mode == "none":
@@ -422,7 +422,7 @@ def _fingerprint(density) -> tuple:
     both halves: an in-place edit that preserves the buffer address, the shape,
     the exact sum *and* every sampled element would go unnoticed — for the
     density table and for the coefficient block alike.  Population components
-    are expected to be immutable once used (``Digest2Histogram`` marks
+    are expected to be immutable once used (``Digest2Component`` marks
     ``h_coeffs`` read-only and hands out a read-only view of ``counts``); this
     guards against the plausible accident, not against an adversary.  The one
     asymmetry left is unavoidable: the table is sampled every ~90th value and
@@ -432,7 +432,7 @@ def _fingerprint(density) -> tuple:
     A component that has no ``_density_table`` (so the table is rebuilt from
     ``counts``/``bin_volume`` on every call) gets a fresh buffer address each
     time and therefore never hits the cache.  That is correct, just not fast;
-    the shipped :class:`~pneo.population.Digest2Histogram` owns its table.
+    the shipped :class:`~pneo.models.digest2.Digest2Component` owns its table.
     """
     tab = np.asarray(getattr(density, "_density_table", None)
                      if getattr(density, "_density_table", None) is not None
@@ -483,7 +483,7 @@ def _fingerprint(density) -> tuple:
         # (the H axis grows by one); only this one catches a change of reach.
         repr(getattr(density, "h_extend_to", None)),
         # ... and this closes the whole CLASS rather than that one instance.
-        # `h_extend_to` is a `Digest2Histogram` attribute; a custom component,
+        # `h_extend_to` is a `Digest2Component` attribute; a custom component,
         # or a future mode, can move an edge without touching it. The edges are
         # what the kernel copies and what every bin lookup is defined against,
         # so they belong in the key on their own account — hashed in full
