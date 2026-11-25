@@ -4,8 +4,6 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
-data/*
-!data/README.md
 .ipynb_checkpoints/
 
 # Rust core kernel build products (rust/build.sh rebuilds both)

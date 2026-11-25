@@ -245,7 +245,7 @@ turns it into an XPASS. Found by adversarial review.
 
 ## Measured numbers
 
-Grid (1200, 50), `data/digest2.model.csv` variant `All`, one core of a 96-core
+Grid (1200, 50), the digest2 model, variant `All`, one core of a 96-core
 node:
 
 | path | s/tracklet | speedup |

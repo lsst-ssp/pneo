@@ -3,8 +3,7 @@
 ``pneo-fetch-model [--out PATH]`` downloads ``digest2.model.csv`` from the
 MPC's public repository (Git LFS media endpoint), verifies its format and
 checksum, and writes it to the per-user cache directory (see
-:mod:`pneo.paths`), where ``pneo score`` finds it. This is the installed-wheel
-counterpart of ``scripts/fetch_digest2_model.py`` (which now delegates here).
+:mod:`pneo.paths`), where ``pneo score`` finds it.
 
 The mpc-public repository carries no LICENSE file (checked 2026-08-31); the
 model is downloaded at use time and never redistributed with pneo.

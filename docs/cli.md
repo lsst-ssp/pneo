@@ -88,8 +88,7 @@ data and `pneo score obs.psv > scores.tsv` is safe. `-q` suppresses the summary 
 ## The population model
 
 `pneo` looks for the model in this order: `--model PATH`, then `$PNEO_MODEL`, then the
-[per-user cache](#downloaded-files) (where `pneo fetch-model` writes it), then `./data/digest2.model.csv`
-(for a source checkout).
+[per-user cache](#downloaded-files) (where `pneo fetch-model` writes it).
 
 The defaults are the configuration used in the paper:
 

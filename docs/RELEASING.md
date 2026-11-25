@@ -288,7 +288,7 @@ Not blockers for publishing, but each one is visible to a PyPI user:
 - ~~**A pip-installed user has no way to get the population model.**~~ Closed:
   the `pneo-fetch-model` console script (and `pneo fetch-model`
   subcommand) ships in both artifacts; the wheels and sdist still deliberately
-  do not carry `data/digest2.model.csv` itself (~4 MB of MPC data, fetched at
+  do not carry the model file itself (~4 MB of MPC data, fetched at
   use time, not ours to redistribute).
 - ~~**`README.md` has no installation section.**~~ Closed: the README carries
   an Installation section and a Command line section (it is the PyPI landing

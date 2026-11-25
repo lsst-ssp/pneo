@@ -8,7 +8,7 @@ Used by .github/workflows/release.yml from a clean virtualenv with a working
 directory outside the checkout, so nothing it asserts can be satisfied by the
 source tree.  Deliberately self-contained: it builds a toy population pair in
 memory and passes the observer state explicitly, so it needs neither
-``data/digest2.model.csv`` nor an ephemeris download.
+the digest2 population model nor an ephemeris download.
 
 ``rust`` mode (the wheels) asserts, in order of what it would catch:
 

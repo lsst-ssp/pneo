@@ -7,14 +7,10 @@
 #     tar xf pneo-<v>.tar.gz && cd pneo-<v> && maturin build --release
 # using the [tool.maturin] table in pyproject.toml, or with rust/build.sh.
 #
-# scripts/fetch_digest2_model.py is included for the same reason: it resolves
-# its destination relative to itself, so `python scripts/fetch_digest2_model.py`
-# populates data/ inside an unpacked sdist and the test suite can then run.
-#
 # Deliberately NOT in the sdist:
-#   * data/  -- digest2.model.csv is ~4 MB of MPC data fetched at first use by
-#     scripts/fetch_digest2_model.py, is gitignored, and is not ours to
-#     redistribute;
+#   * the population model (digest2.model.csv) -- ~4 MB of MPC data that
+#     `pneo fetch-model` downloads into the per-user cache at use time, and
+#     not ours to redistribute;
 #   * docs of record, .github/ -- development material,
 #     not part of the installable package;
 #   * rust/target/ and any compiled extension -- build products.
@@ -27,11 +23,9 @@
 
 recursive-include rust *.rs *.toml *.lock *.sh *.py *.md
 recursive-include tests *.py
-recursive-include scripts *.py
 include MANIFEST.in
 
 prune rust/target
-prune data
 prune .github
 exclude .gitignore
 prune docs

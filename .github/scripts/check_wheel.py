@@ -25,7 +25,7 @@ What is checked
       layout can get wrong -- a wheel that claims the whole ``pneo``
       package but forgets the Python modules, and a wheel that ships a
       developer's leftovers (``__pycache__``, a stale ``.so``,
-      ``data/digest2.model.csv``, ``tests/``, ``validation/``).
+      the population model, ``tests/``, ``validation/``).
 """
 
 from __future__ import annotations

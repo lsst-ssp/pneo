@@ -14,8 +14,8 @@ checked here rather than trusted to MANIFEST.in:
   is a real source release and a downstream packager can build the extension
   from it (``maturin build`` via the ``[tool.maturin]`` table, or
   ``rust/build.sh``);
-* it must not carry ``data/digest2.model.csv`` (~4 MB of MPC data fetched at
-  use time and not ours to redistribute), any compiled extension, or the
+* it must not carry the population model (~4 MB of MPC data fetched at use
+  time and not ours to redistribute), any compiled extension, or the
   development trees (``validation/``, ``paper/``, ``.github/``).
 """
 
@@ -41,7 +41,6 @@ REQUIRED = (
     "rust/build.rs",
     "rust/src/lib.rs",
     "rust/src/kernel.rs",
-    "scripts/fetch_digest2_model.py",
     "tests/test_imports.py",
 )
 
@@ -108,7 +107,7 @@ def main() -> int:
     if bad:
         fail(f"must not be in the sdist: {bad}")
 
-    print(f"OK: {len(rel)} entries, crate included, no data/ and no build products")
+    print(f"OK: {len(rel)} entries, crate included, no model data and no build products")
     return 0
 
 

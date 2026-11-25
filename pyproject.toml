@@ -88,9 +88,9 @@ where = ["src"]
 
 # The compiled extension and the population model are deliberately absent from
 # the setuptools build: `src/pneo/_core.abi3.so` is a build product of
-# rust/build.sh (and is what maturin puts in the wheel itself), and
-# `data/digest2.model.csv` is fetched at first use by
-# scripts/fetch_digest2_model.py.  Neither is package data.  MANIFEST.in states
+# rust/build.sh (and is what maturin puts in the wheel itself), and the
+# population model is downloaded into the per-user cache by `pneo fetch-model`.
+# Neither is package data.  MANIFEST.in states
 # what the sdist carries; the release workflow asserts what it must not.
 
 [tool.maturin]

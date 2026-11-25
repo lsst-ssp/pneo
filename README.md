@@ -97,7 +97,7 @@ The Rust kernel scores one tracklet in about 12 ms on a single CPU core, or abou
 ```bash
 git clone https://github.com/lsst-ssp/pneo && cd pneo
 pip install -e ".[dev]"
-python scripts/fetch_digest2_model.py   # the population model, into ./data/
+pneo fetch-model                        # the population model, into the user cache
 rust/build.sh                           # optional: build the Rust kernel (needs cargo)
 pytest
 ```
