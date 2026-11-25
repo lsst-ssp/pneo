@@ -1,33 +1,15 @@
-# pneo
+# pneo — an optimal Bayesian replacement for digest2
 
 [![CI](https://github.com/lsst-ssp/pneo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lsst-ssp/pneo/actions/workflows/ci.yml)
 
 pneo computes the probability that a newly detected moving object is a near-Earth object
 (NEO), using only what a single night's tracklet measures: its sky position, angular
-motion, and apparent magnitude. It is built to triage candidates for NEO follow-up at the
-scale of the Vera C. Rubin Observatory.
+motion, and apparent magnitude. Its classifications are provably optimal for the adopted
+population model, and its probabilities are calibrated.
 
-The result is the exact Bayesian posterior probability under a model of the Solar System's
-small-body populations, with no tuned scores or separately chosen priors. Its
-classifications are therefore optimal for the adopted model, and its probabilities are
-calibrated: among tracklets assigned P(NEO) = 0.8, about 80% are NEOs. The name is the
-quantity it computes, P(NEO).
-
-## Why use it
-
-- **Calibrated probabilities.** Summing P(NEO) over a night's candidates gives the
-  expected number of NEOs among them, so a follow-up threshold can be chosen by expected
-  yield and contamination, and NEO targets can be weighed against other observations on
-  a common scale.
-- **Cleaner candidate lists at Rubin's depth.** On simulated tracklets to Rubin's depth,
-  at the completeness of the current NEO Confirmation Page posting threshold, its
-  selection is twice as pure as that of digest2, the classifier now in use (96% against
-  48% NEOs), mainly because it rejects the distant objects that digest2 mistakes for NEOs.
-- **Tested on real data.** On the Rubin alert stream and Rubin Data Preview 2 it recovers
-  the same NEOs as digest2 with a selection 1.4–1.7 times purer, and its predicted NEO
-  counts agree closely with those observed.
-
-The method and these tests are described in Singh, Jurić & Ivezić (in preparation).
+Applied to present-day NEOCP candidates, its selection is 1.14x purer than digest2's. It
+was shown to be 1.4–1.7x as pure on early Rubin data, and is expected to be ~2x as pure
+at full LSST depth.
 
 ## Installation
 
@@ -127,7 +109,8 @@ and the [design records](https://github.com/lsst-ssp/pneo/blob/main/docs/design/
 
 ## Citing pneo
 
-If you use pneo, please cite Singh, Jurić & Ivezić (in preparation); see
+The method and the tests behind the numbers above are described in Singh, Jurić &
+Ivezić (in preparation). If you use pneo, please cite that paper; see
 [CITATION.cff](https://github.com/lsst-ssp/pneo/blob/main/CITATION.cff).
 
 ## License
