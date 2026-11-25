@@ -1,28 +1,26 @@
 # The `pneo` command line
 
-`pneo` has three subcommands:
+`pneo` has two subcommands:
 
 | Command | What it does |
 |---|---|
 | `pneo classify FILE ...` | Classify the tracklets in one or more observation files |
-| `pneo fetch` | Download the MPC digest2 population model (~4 MB) |
-| `pneo fetch` | Download the MPC list of observatory codes |
+| `pneo fetch` | Download the MPC digest2 population model (~4 MB) and the MPC list of observatory codes (`--model-only` or `--obscodes-only` for one of them) |
 
 `pneo classify --help` is self-contained and lists every option. This page explains the
 behavior behind them.
 
 ## Downloaded files
 
-`pneo fetch` and `pneo fetch` save their downloads in a per-user cache
-directory, where `pneo classify` finds them from any working directory:
+`pneo fetch` saves its downloads in a per-user cache directory, where `pneo classify` finds them from any working directory:
 
 | Platform | Directory |
 |---|---|
 | Linux, macOS | `~/.cache/pneo` (or `$XDG_CACHE_HOME/pneo` if set) |
 | Windows | `%LOCALAPPDATA%\pneo\Cache` |
 
-Set `$PNEO_CACHE_DIR` to use another directory. `pneo fetch --help` prints the
-path in use.
+Set `$PNEO_CACHE_DIR` to use another directory. `pneo classify --help` prints the
+paths in use.
 
 ## Input
 
@@ -53,18 +51,18 @@ format is tab-separated with nine columns:
 |---|---|
 | `object_id` | Object identifier from the input |
 | `n_obs` | Number of detections in the tracklet used |
-| `arc_h` | Time spanned by the tracklet, in hours |
+| `arc_hours` | Time spanned by the tracklet, in hours |
 | `epoch` | Epoch of the fitted position and rates (UTC) |
 | `obscode` | Observatory code |
-| `V` | Apparent V magnitude used |
+| `mag_v` | Apparent V magnitude used |
 | `p_neo` | Probability that the object is an NEO |
 | `log_lr` | Natural log of the NEO-to-other likelihood ratio |
 | `status` | How the row was obtained (below) |
 
 A field with no value is empty. `--format csv` writes the same columns comma-separated;
 `--format json` writes one JSON object per line with every field, including the fitted
-position and rates, both class likelihoods, the fit residual and where the observatory
-location came from. `-o PATH` writes to a file instead of stdout.
+position and rates (degrees and deg/day, with the on-sky RA rate), the epoch as MJD, both
+class likelihoods, the fit residual and where the observatory location came from. `-o PATH` writes to a file instead of stdout.
 
 **Status values.**
 
@@ -73,6 +71,9 @@ location came from. `-o PATH` writes to a file instead of stdout.
   object fainter (smaller) than the population model covers, which happens only for very
   close, very small objects. `pneo` assigns `p_neo = 1` by rule and leaves `log_lr` empty.
   In simulations this rule fired only for NEOs.
+- `no_support`: neither class has objects consistent with the tracklet; `p_neo` is
+  undefined.
+- `empty_region`: no bound orbit fits the tracklet; `p_neo` is undefined.
 - Anything else names why the object could not be scored, for example
   `single_detection`.
 
@@ -98,7 +99,7 @@ The defaults are the configuration used in the paper:
 | `--h-extend-to` | `30` | The model ends at absolute magnitude H = 25.5; `pneo` extends its faintest bin to H = 30 so that very small, nearby NEOs can be scored. `none` disables the extension. |
 | `--h-interpolation` | `none` | How the faint end is reconstructed: `none` uses digest2's piecewise-constant bins; `pchip` uses a smooth, count-conserving interpolation. |
 
-## Numerical options
+## Advanced options
 
 | Option | Default | Meaning |
 |---|---|---|

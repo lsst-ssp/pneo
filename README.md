@@ -15,8 +15,7 @@ at full LSST depth.
 
 ```bash
 pip install pneo            # CPython >= 3.11
-pneo fetch            # once: download the MPC population model (~4 MB)
-pneo fetch         # once: download the MPC observatory-code table
+pneo fetch                  # once: the MPC population model and observatory codes
 ```
 
 Both are stored in a per-user cache; see
@@ -37,17 +36,17 @@ automatically), fits one tracklet per object, and writes one row per tracklet:
 
 ```console
 $ pneo classify neocp.psv
-object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
-T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
-T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
-T000003    5      1.3333  2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
-T000004    1                                        X05                                single_detection
+object_id  n_obs  arc_hours  epoch                     obscode  mag_v  p_neo     log_lr   status
+T000001    4      0.7500     2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
+T000002    3      0.0667     2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
+T000003    5      1.3333     2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
+T000004    1                                           X05                                single_detection
 ```
 
 `p_neo` is the probability that the object is an NEO. `status` says how each row was
-obtained: `ok` is a computed probability; `beyond_model` marks a very faint,
-nearby object beyond the population model's size range, assigned P(NEO) = 1 by rule; any
-other value names why the object could not be scored. Use only `status == ok` rows when
+obtained: `ok` is a computed probability; `beyond_model` marks a very small, nearby
+object beyond the population model's size range, assigned P(NEO) = 1 by rule; any other
+value says why there is no probability. Use only `status == ok` rows when
 checking calibration. Output is tab-separated by default (`--format csv` or `json` for
 other formats). `pneo classify --help` lists every option, and [docs/cli.md](https://github.com/lsst-ssp/pneo/blob/main/docs/cli.md)
 describes them in more detail.
@@ -55,22 +54,25 @@ describes them in more detail.
 ## Quick start: Python
 
 ```python
-from astropy.time import Time
-from pneo import Attributable, Digest2Component, classify
-from pneo.paths import default_model_path
+import pneo
 
-# The population model, as `pneo classify` uses it (run `pneo fetch` first).
-neo, other = Digest2Component.neo_other_pair(default_model_path(), h_extend_to=30.0)
+# One tracklet: position [deg], on-sky rates [deg/day], epoch [MJD, UTC], V magnitude.
+p = pneo.classify(166.2, 5.7, -1.1, 0.29, 61114.25, 21.0, obscode="X05")
 
-att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,  # rad, rad/day
-                   epoch=Time("2026-03-15T06:00:00"), v_mag=21.0)
-res = classify(att, neo, other)
-print(res.p_neo)
-res.plot_posterior_map()   # where the probability lies in distance and range-rate
+# Arrays work the same way, and observation files can be read directly:
+tracklets, failures = pneo.read_observations("neocp.psv")
+p = pneo.classify(**tracklets)                 # one P(NEO) per tracklet
+r = pneo.classify(**tracklets, details=True)   # also log_lr, likelihoods and status
+
+# Where the probability lies in distance and range-rate (needs pneo[plot]):
+m = pneo.posterior_map(166.2, 5.7, -1.1, 0.29, 61114.25, 21.0, obscode="X05")
+pneo.plot_posterior_map(m)
 ```
 
-`classify_many` scores a list of tracklets in one call, in parallel when the Rust kernel
-is available.
+`ra_rate` is the on-sky rate, d(α)/dt·cos δ. The population model is loaded from the
+cache on first use; `pneo.load_model()` loads it explicitly, for example with
+`variant="Unk"`, and the result can be passed as `model=`. [docs/api.md](https://github.com/lsst-ssp/pneo/blob/main/docs/api.md)
+describes every function.
 
 ## How it works
 
@@ -97,7 +99,7 @@ The Rust kernel scores one tracklet in about 12 ms on a single CPU core, or abou
 ```bash
 git clone https://github.com/lsst-ssp/pneo && cd pneo
 pip install -e ".[dev]"
-pneo fetch                        # the population model, into the user cache
+pneo fetch                              # the population model, into the user cache
 rust/build.sh                           # optional: build the Rust kernel (needs cargo)
 pytest -n auto                          # run the tests in parallel
 ```

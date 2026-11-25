@@ -35,7 +35,7 @@ Two consequences, both deliberate:
   which is exactly what `backend="auto"` degrades to at run time (see
   `src/pneo/backend.py`). Nothing hard-fails for want of `cargo`. The
   trade-off is that a user on an uncovered platform gets the 40×-slower path
-  *silently* — `pneo.backend.core_available()` is how they find out, and
+  *silently* — `pneo._backend.core_available()` is how they find out, and
   extending the matrix is how we fix it.
 - **`pip install -e .` in a checkout stays pure Python** and does not invoke
   cargo. The dev flow is unchanged: install editable once, then `rust/build.sh`
@@ -85,7 +85,7 @@ platform × interpreter, and a new Python release needs no new wheel.
 7. **Verify from the index**, in a fresh venv on a machine that is not this one:
    ```sh
    python -m venv /tmp/v && /tmp/v/bin/pip install pneo
-   /tmp/v/bin/python -c "import pneo; from pneo.backend import core_available; print(pneo.__version__, core_available())"
+   /tmp/v/bin/python -c "import pneo; from pneo._backend import core_available; print(pneo.__version__, core_available())"
    ```
    Expect `True` on the three covered platforms.
 
@@ -130,7 +130,7 @@ checkouts use `fetch-depth: 0` so tags are visible to setuptools-scm.
 - `[tool.maturin] module-name == "pneo._core"` and
   `python-source == "src"`, matching `[tool.setuptools.packages.find] where` —
   lose the first and the wheel would silently ship a top-level `pneo_core`
-  module that `pneo.backend` never looks for;
+  module that `pneo._backend` never looks for;
 - exactly one `abi3-pyXY` feature on pyo3, and `requires-python` equal to the
   floor it implies — the "one wheel serves 3.11+" claim in this document is only
   true while that holds.
@@ -286,12 +286,11 @@ Not blockers for publishing, but each one is visible to a PyPI user:
 - ~~**No `LICENSE` file in the repository.**~~ Closed: `LICENSE` (BSD-3-Clause)
   is at the root and ships in both artifacts via the default `license-files` globs.
 - ~~**A pip-installed user has no way to get the population model.**~~ Closed:
-  the `pneo-fetch-model` console script (and `pneo fetch-model`
-  subcommand) ships in both artifacts; the wheels and sdist still deliberately
+  `pneo fetch` (and `pneo.fetch()`) ships in both artifacts; the wheels and sdist still deliberately
   do not carry the model file itself (~4 MB of MPC data, fetched at
   use time, not ours to redistribute).
 - ~~**`README.md` has no installation section.**~~ Closed: the README carries
   an Installation section and a Command line section (it is the PyPI landing
   page). Original note, for context: worth saying that a wheel carries the Rust kernel, that
   other platforms get the numpy reference from the sdist, and how to check which
-  one you have (`pneo.backend.core_available()`).
+  one you have (`pneo._backend.core_available()`).
