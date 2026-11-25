@@ -1005,7 +1005,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--obscodes", metavar="PATH", default=None,
         help="local copy of the MPC 'List Of Observatory Codes' page, for "
              f"stations outside the built-in 14-code table. Default: "
-             f"${OBSCODE_ENV_VAR} if set, else ./data/ObsCodesF.html. Get one "
+             f"${OBSCODE_ENV_VAR} if set, else {default_obscodes_path()}. Get one "
              "with `pneo fetch-obscodes`. NEVER fetched during a scoring "
              "run; an unknown code falls back to the GEOCENTRE with a warning, "
              "which is worth up to 0.17 in p_neo at a survey station, so "
@@ -1265,7 +1265,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
             f"{shown}. That displaces the observer by up to one Earth radius "
             "and is worth up to 0.17 in p_neo at a survey station -- enough to "
             "change a triage decision. Fix it with:\n"
-            "    pneo fetch-obscodes        # writes ./data/ObsCodesF.html\n"
+            "    pneo fetch-obscodes        # writes it to the user cache\n"
             "  then re-run (or pass --obscodes PATH)."
         )
 
