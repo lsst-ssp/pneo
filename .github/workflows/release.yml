@@ -262,7 +262,7 @@ jobs:
             interpreter: python3.11
             plat-tag: manylinux2014_x86_64
           - name: macos-arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             interpreter: python
             plat-tag: macosx

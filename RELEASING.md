@@ -145,7 +145,7 @@ Shipped as wheels (one row of the `wheels` matrix each):
 | wheel | runner | notes |
 | --- | --- | --- |
 | `manylinux2014_x86_64` | `ubuntu-latest` in `quay.io/pypa/manylinux2014_x86_64` | glibc ≥ 2.17 — deliberately the oldest we support, which includes RHEL/CentOS 7-era cluster nodes. The `manylinux: "2_17"` input names the container version explicitly so a future default change fails instead of narrowing the wheel silently. |
-| `macosx_11_0_arm64` | `macos-14` | Apple silicon |
+| `macosx_11_0_arm64` | `macos-15` | Apple silicon |
 | `win_amd64` | `windows-latest` | |
 
 Everything else — linux aarch64, musl linux (Alpine), macOS x86_64, ppc64le,
@@ -181,7 +181,7 @@ Concrete recipes for the common two:
 
 # macOS x86_64 (Intel); or use target: universal2-apple-darwin for one fat wheel
 - name: macos-x86_64
-  runner: macos-14
+  runner: macos-15
   target: x86_64-apple-darwin
   interpreter: python
   plat-tag: macosx
