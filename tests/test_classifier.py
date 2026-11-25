@@ -59,7 +59,7 @@ from pneo.transforms import (
     topocentric_to_heliocentric,
 )
 
-from model_location import MODEL_PATH  # noqa: E402
+from model_location import MODEL_PATH, needs_model  # noqa: E402
 
 #: One fixed epoch for every hand-constructed case (results must not depend on
 #: when the test is run).
@@ -1294,6 +1294,7 @@ def test_posterior_helper_gates_the_policy_on_the_mechanism():
     assert np.isnan(p) and s == "nan"
 
 
+@needs_model
 def test_h_support_end_is_the_pair_level_boundary():
     from pneo.classifier import h_support_end
 
@@ -1495,6 +1496,7 @@ def test_both_backends_agree_exactly_on_the_policy(d2pair):
     assert wa == wb, "the two backends must raise the same warning text"
 
 
+@needs_model
 def test_policy_assigned_one_is_distinguishable_from_a_real_one(obs):
     """A likelihood-based p = 1.0 and a policy p = 1.0 must not look alike.
 
@@ -1586,6 +1588,7 @@ def test_classify_many_carries_the_policy_status(d2pair):
         assert [np.isnan(r.log_lr) for r in batch] == [False, True, False]
 
 
+@needs_model
 @pytest.mark.parametrize("interp", ["none", "pchip"])
 def test_the_h_extension_removes_the_need_for_the_policy(interp):
     """D-19's two halves, on the same tracklet.
@@ -1641,6 +1644,7 @@ PILOT_DIR = os.path.join(
 )
 
 
+@needs_model
 @pytest.mark.parametrize("backend", ["python", "rust"])
 @pytest.mark.parametrize("diagnostics", [True, False])
 def test_the_eleven_real_neocp_wall_tracklets_still_flag(backend, diagnostics):

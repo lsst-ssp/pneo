@@ -57,7 +57,7 @@ pytestmark = pytest.mark.skipif(
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-from model_location import MODEL_PATH  # noqa: E402
+from model_location import MODEL_PATH, needs_model  # noqa: E402
 GATE_GEN = os.path.join(REPO, "validation", "output", "gate_v0", "gen.npz")
 
 # Acceptance bars from the approved design (issue #1).
@@ -735,6 +735,7 @@ def test_end_to_end_parity_on_corner_geometries(d2pair):
         )
 
 
+@needs_model
 def test_end_to_end_parity_in_clamped_mode(clamped_pair):
     """The D-14 digest2-emulation pair (top H bin [24, inf)) also matches."""
     neo, other = clamped_pair
@@ -1596,6 +1597,7 @@ def pchip_pair():
     return Digest2Histogram.neo_other_pair(MODEL_PATH, h_interpolation="pchip")
 
 
+@needs_model
 def test_pchip_density_lookup_is_bit_exact(core, pchip_pair):
     """Rust == Python bit for bit on the smooth branch, edges included.
 
@@ -1803,6 +1805,7 @@ def test_declared_h_interpolation_without_coefficients_is_refused(pchip_pair):
         core_model_for(FutureMode(neo), FutureMode(other))
 
 
+@needs_model
 def test_core_model_rejects_bad_coefficient_arrays(core, d2pair):
     """The kernel's own validation of the coefficient block.
 
@@ -2179,6 +2182,7 @@ def test_extended_mode_changes_the_answer(d2pair, ext_pair):
           f"median Lambda_NEO x{gn:.4f}, Lambda_other x{go:.4f}")
 
 
+@needs_model
 def test_extended_pair_mismatch_is_refused_at_every_entry_point(
         core, d2pair, ext_pair):
     """The D-19 flag joins the paired-mode guard, on BOTH backends.
@@ -2226,6 +2230,7 @@ def test_extended_pair_mismatch_is_refused_at_every_entry_point(
     assert core_model_for(far_neo, far_other) is not None
 
 
+@needs_model
 def test_two_reaches_do_not_share_a_cached_core_model(core, ext_pair):
     """The fingerprint hazard D-19 introduces, closed and measured.
 
@@ -2254,6 +2259,7 @@ def test_two_reaches_do_not_share_a_cached_core_model(core, ext_pair):
     assert cm40.density_at(el3, h)[0][0] > 0.0
 
 
+@needs_model
 def test_extended_and_clamped_are_mutually_exclusive_in_the_kernel_too(core):
     """The Python constructor refuses the combination; the kernel cannot even
     be handed it, because the clamp would then extend a constant to infinity

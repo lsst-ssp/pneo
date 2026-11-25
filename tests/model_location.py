@@ -12,3 +12,13 @@ import os
 from pneo.paths import default_model_path
 
 MODEL_PATH = os.environ.get("PNEO_MODEL", "").strip() or str(default_model_path())
+
+import pytest  # noqa: E402
+
+#: Skip a test when the population model is not available locally.  Fixtures
+#: that load the model skip on their own; this marks tests that load it
+#: directly.
+needs_model = pytest.mark.skipif(
+    not os.path.exists(MODEL_PATH),
+    reason=f"digest2 model file not found: {MODEL_PATH}; run `pneo fetch-model`",
+)
