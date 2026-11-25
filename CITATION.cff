@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: >-
+  If you use pneo, please cite the paper describing it (see preferred-citation).
+title: "pneo: Bayesian classification of near-Earth object tracklets"
+type: software
+license: BSD-3-Clause
+repository-code: "https://github.com/lsst-ssp/pneo"
+keywords:
+  - near-Earth objects
+  - asteroids
+  - Bayesian statistics
+  - classification
+  - Vera C. Rubin Observatory
+authors:
+  - given-names: Mario
+    family-names: Jurić
+    affiliation: University of Washington
+    orcid: "https://orcid.org/0000-0003-1996-9252"
+preferred-citation:
+  type: article
+  title: "A Bayesian Approach to Prioritizing the Follow-Up of Near-Earth Objects"
+  status: in-preparation
+  authors:
+    - given-names: Devanshi
+      family-names: Singh
+    - given-names: Mario
+      family-names: Jurić
+    - given-names: Željko
+      family-names: Ivezić
