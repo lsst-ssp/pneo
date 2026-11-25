@@ -994,3 +994,19 @@ def test_console_script_is_declared_in_pyproject():
     """The `pneo` entry point must be wired, or none of this is reachable."""
     text = open(os.path.join(REPO_ROOT, "pyproject.toml")).read()
     assert 'pneo = "pneo.cli:main"' in text
+
+
+def test_readme_example_matches_the_shipped_example_file(capsys):
+    """The README's example output must be what `pneo classify` prints for
+    examples/example.psv, so the documentation cannot drift from the code."""
+    _require_model()
+    example = os.path.join(REPO_ROOT, "examples", "example.psv")
+    assert cli.main(["classify", example, "--model", MODEL_PATH, "-q"]) == 0
+    out, _err = capsys.readouterr()
+    actual = [line.split() for line in out.strip().split("\n")]
+
+    readme = open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8").read()
+    block = readme.split("$ pneo classify examples/example.psv\n", 1)[1]
+    block = block.split("```", 1)[0]
+    documented = [line.split() for line in block.strip().split("\n")]
+    assert documented == actual

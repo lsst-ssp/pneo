@@ -23,6 +23,7 @@
 
 recursive-include rust *.rs *.toml *.lock *.sh *.py *.md
 recursive-include tests *.py
+recursive-include examples *.psv
 include MANIFEST.in
 
 prune rust/target

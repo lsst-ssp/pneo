@@ -32,10 +32,12 @@ results about 40 times more slowly.
 ## Quick start: command line
 
 `pneo classify` reads astrometry in ADES PSV or MPC 80-column format (detected
-automatically), fits one tracklet per object, and writes one row per tracklet:
+automatically), fits one tracklet per object, and writes one row per tracklet. With the
+four synthetic tracklets in
+[examples/example.psv](https://github.com/lsst-ssp/pneo/blob/main/examples/example.psv):
 
 ```console
-$ pneo classify neocp.psv
+$ pneo classify examples/example.psv
 object_id  n_obs  arc_hours  epoch                     obscode  mag_v  p_neo     log_lr   status
 T000001    4      0.7500     2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
 T000002    3      0.0667     2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
@@ -60,7 +62,7 @@ import pneo
 p = pneo.classify(166.2, 5.7, -1.1, 0.29, 61114.25, 21.0, obscode="X05")
 
 # Arrays work the same way, and observation files can be read directly:
-tracklets, failures = pneo.read_observations("neocp.psv")
+tracklets, failures = pneo.read_observations("examples/example.psv")
 p = pneo.classify(**tracklets)                 # one P(NEO) per tracklet
 r = pneo.classify(**tracklets, details=True)   # also log_lr, likelihoods and status
 
