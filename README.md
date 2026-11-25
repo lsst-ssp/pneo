@@ -1,8 +1,8 @@
-# pneo — an optimal Bayesian replacement for digest2
+# `pneo` — a Bayesian update to digest2
 
 [![CI](https://github.com/lsst-ssp/pneo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lsst-ssp/pneo/actions/workflows/ci.yml)
 
-pneo computes the probability that a newly detected moving object is a near-Earth object
+`pneo` computes the probability that a newly detected moving object is a near-Earth object
 (NEO), using only what a single night's tracklet measures: its sky position, angular
 motion, and apparent magnitude. Its classifications are provably optimal for the adopted
 population model, and its probabilities are calibrated.
@@ -75,10 +75,10 @@ is available.
 ## How it works
 
 A tracklet measures an object's position and angular motion on the sky, but not its
-distance or its velocity along the line of sight. pneo considers every distance and
+distance or its velocity along the line of sight. `pneo` considers every distance and
 radial velocity that gives a bound orbit around the Sun. Each such hypothesis implies a
 full orbit and, from the apparent magnitude, the object's absolute magnitude (its size).
-pneo weighs each hypothesis by how many objects with that orbit and size a population
+`pneo` weighs each hypothesis by how many objects with that orbit and size a population
 model predicts, accounting for how a grid of distances and velocities maps onto orbits.
 P(NEO) is the fraction of this weight that falls on NEO orbits (perihelion below
 1.3 AU).
@@ -105,12 +105,12 @@ pytest
 An editable install is pure Python until `rust/build.sh` compiles the kernel into the
 source tree; rerun it after changing the Rust code. The `docs/` directory holds the
 detailed [command-line notes](https://github.com/lsst-ssp/pneo/blob/main/docs/cli.md), the [release process](https://github.com/lsst-ssp/pneo/blob/main/docs/RELEASING.md),
-and the [design records](https://github.com/lsst-ssp/pneo/blob/main/docs/design/README.md) from pneo's development.
+and the [design records](https://github.com/lsst-ssp/pneo/blob/main/docs/design/README.md) from `pneo`'s development.
 
-## Citing pneo
+## Citing `pneo`
 
 The method and the tests behind the numbers above are described in Singh, Jurić &
-Ivezić (in preparation). If you use pneo, please cite that paper; see
+Ivezić (in preparation). If you use `pneo`, please cite that paper; see
 [CITATION.cff](https://github.com/lsst-ssp/pneo/blob/main/CITATION.cff).
 
 ## License

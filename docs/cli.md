@@ -17,18 +17,18 @@ behavior behind them.
 content (`--obs-format` forces one). Detections are grouped by object across all the
 files given, so an object split over two files becomes one tracklet.
 
-For each object, pneo uses the earliest same-night, same-station set of at least two
+For each object, `pneo` uses the earliest same-night, same-station set of at least two
 detections. A gap longer than `--night-gap-hours` (default 3) splits a night, and a
 night longer than `--max-arc-hours` (default 2) is cut to its first two hours, because
-the fit assumes linear motion over the tracklet. pneo fits the position and angular rates
+the fit assumes linear motion over the tracklet. `pneo` fits the position and angular rates
 at the first detection and converts the photometry to a single V magnitude.
 
 **Photometry.** Magnitudes are converted to Johnson V with digest2's own table of band
 offsets. There is one deliberate difference: an MPC 80-column record with a magnitude but
 a blank band is treated as V, where digest2's 80-column reader applies its −0.8 mag
-unknown-band correction, so pneo reads such a record 0.8 mag fainter than digest2 does.
+unknown-band correction, so `pneo` reads such a record 0.8 mag fainter than digest2 does.
 A blank band in older astrometry usually means an unfiltered magnitude, and this keeps
-pneo's ADES and 80-column readers consistent with each other. The number of affected
+`pneo`'s ADES and 80-column readers consistent with each other. The number of affected
 records is reported on stderr.
 
 ## Output
@@ -58,7 +58,7 @@ location came from. `-o PATH` writes to a file instead of stdout.
 - `ok`: a probability computed from the population model.
 - `fully_truncated_flagged`: every distance consistent with the tracklet implies an
   object fainter (smaller) than the population model covers, which happens only for very
-  close, very small objects. pneo assigns `p_neo = 1` by rule and leaves `log_lr` empty.
+  close, very small objects. `pneo` assigns `p_neo = 1` by rule and leaves `log_lr` empty.
   In simulations this rule fired only for NEOs.
 - Anything else names why the object could not be scored, for example
   `single_detection`.
@@ -74,7 +74,7 @@ data and `pneo score obs.psv > scores.tsv` is safe. `-q` suppresses the summary 
 
 ## The population model
 
-pneo looks for the model in this order: `--model PATH`, then `$PNEO_MODEL`, then the
+`pneo` looks for the model in this order: `--model PATH`, then `$PNEO_MODEL`, then the
 per-user cache (where `pneo fetch-model` writes it), then `./data/digest2.model.csv`
 (for a source checkout).
 
@@ -83,7 +83,7 @@ The defaults are the configuration used in the paper:
 | Option | Default | Meaning |
 |---|---|---|
 | `--variant` | `All` | `All` is the full modeled population; `Unk` removes objects already in the MPC catalog. The paper scores NEO Confirmation Page candidates with `Unk` and samples of known objects with `All`. |
-| `--h-extend-to` | `30` | The model ends at absolute magnitude H = 25.5; pneo extends its faintest bin to H = 30 so that very small, nearby NEOs can be scored. `none` disables the extension. |
+| `--h-extend-to` | `30` | The model ends at absolute magnitude H = 25.5; `pneo` extends its faintest bin to H = 30 so that very small, nearby NEOs can be scored. `none` disables the extension. |
 | `--h-interpolation` | `none` | How the faint end is reconstructed: `none` uses digest2's piecewise-constant bins; `pchip` uses a smooth, count-conserving interpolation. |
 
 ## Numerical options
@@ -98,7 +98,7 @@ The defaults are the configuration used in the paper:
 
 ## Observatory codes
 
-pneo has a built-in table of 14 survey sites. Any other station needs the MPC list of
+`pneo` has a built-in table of 14 survey sites. Any other station needs the MPC list of
 observatory codes: `pneo fetch-obscodes` downloads it to the user cache, where
 `pneo score` looks by default (`--obscodes PATH` or `$PNEO_OBSCODES` point elsewhere).
 Scoring never touches the network.
