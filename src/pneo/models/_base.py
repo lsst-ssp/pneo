@@ -45,9 +45,8 @@ class PopulationComponent(ABC):
             the angles. Units: objects per unit
             q [AU] x e [-] x i [rad] x Omega, omega, M [rad^3] x H [mag],
             i.e. objects / (AU * rad^4 * mag).
-            (WP0 contract amendment, authorized by the supervisor after the
-            WP4 review: the original wording read "AU * rad * mag", which
-            omitted the three angular dimensions carried by the included
+            (An earlier version of this docstring read "AU * rad * mag",
+            omitting the three angular dimensions carried by the included
             1/(2 pi)^3 factor.)
         H : (...,) absolute magnitudes.
 

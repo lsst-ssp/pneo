@@ -467,7 +467,7 @@ def test_named_classes_do_not_partition_ss(tables):
 
 
 def test_n18_n22_are_subsets_of_neo(tables):
-    """The trap the supervisor flagged: N18/N22 are H-limited NEO subsets.
+    """N18/N22 are H-limited NEO subsets, so summing classes double-counts.
 
     Exact in the "All" model.  In "Unk" the nesting is violated in a handful
     of bins by <= 4 objects: muk.c's "expand all where known > all" fix-up is

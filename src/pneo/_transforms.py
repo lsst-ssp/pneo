@@ -95,8 +95,7 @@ def tangent_basis(ra: np.ndarray, dec: np.ndarray) -> tuple[np.ndarray, np.ndarr
     Attributable.ra_rate being d(ra)/dt. Implemented in WP0 and shared by
     WP2/WP3; do not reimplement.
 
-    `ra` and `dec` are broadcast against each other first (WP2 review fix,
-    supervisor-authorized): without it a mixed scalar/array call such as
+    `ra` and `dec` are broadcast against each other first: without it a mixed scalar/array call such as
     tangent_basis(ra=(5,), dec=scalar) raised from np.stack while the
     transposed call succeeded, and the asymmetry leaked into
     `topocentric_to_heliocentric` / `ranging_jacobian_det` while
