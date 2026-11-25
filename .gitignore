@@ -6,17 +6,10 @@ dist/
 .pytest_cache/
 data/*
 !data/README.md
-validation/output/
 .ipynb_checkpoints/
 
 # Rust core kernel build products (rust/build.sh rebuilds both)
 rust/target/
 src/ds42/_core*.so
-
-# Large regenerable outputs of the paper-revision studies (scripts, reports, figures and small JSON summaries are committed)
-validation/d2_false_alarms/output/*.npz
-validation/jacobian_off/output/*.npz
-validation/mpcorb_fig4/output/*.npz
-validation/mpcorb_fig4/output/points*.json
 
 .ipynb_checkpoints/

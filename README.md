@@ -22,15 +22,15 @@ the two codes differ in method alone.
 
 **Status (2026-09): v0 complete.** The DESIGN §4.1 self-consistency gate **passes** at
 N = 2×10⁴ and at N = 10⁵ (global odds scale ĉ = 1.03 [0.88, 1.20]; see
-[validation/GATE_RESULTS.md](validation/GATE_RESULTS.md)), and the digest2 head-to-head
+the paper), and the digest2 head-to-head
 on identical inputs shows better ranking (premise-repaired full set:
 ΔAUC +0.013 [+0.002, +0.025], P ≤ 0.01; independently corroborated at +0.014
 [+0.007, +0.022] on the enriched set) and an order-of-magnitude calibration advantage —
 at matched 88% completeness, 59.1% → 6.3% contamination
-([validation/DIGEST2_COMPARISON.md](validation/DIGEST2_COMPARISON.md)). On **real NEOCP
+(the paper). On **real NEOCP
 tracklets** (499 labeled discoveries) the calibration survives genuine prior mismatch:
 predicted/observed NEO count 1.01 vs digest2's 1.38
-([validation/NEOCP_PILOT.md](validation/NEOCP_PILOT.md)).
+(the paper).
 
 ```python
 from astropy.time import Time
