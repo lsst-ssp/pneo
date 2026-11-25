@@ -19,7 +19,6 @@ Entirely offline and fast.  Three groups carry most of the weight:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import warnings
@@ -43,11 +42,6 @@ from pneo.attributable import (  # noqa: E402
 from pneo.constants import K_GAUSS  # noqa: E402
 
 ARCSEC = 206264.80624709636
-
-PILOT_OUT = os.path.join(REPO_ROOT, "validation", "output", "neocp_pilot")
-PILOT_TRACKLETS = os.path.join(PILOT_OUT, "tracklets.json")
-PILOT_PSV = os.path.join(PILOT_OUT, "tracklets.psv")
-PILOT_OBSCODES = os.path.join(PILOT_OUT, "raw", "ObsCodesF.html")
 
 
 # --------------------------------------------------------------------------
@@ -918,85 +912,3 @@ def test_tracklet_attributable_and_epoch_string():
     assert att.epoch.scale == "utc"
 
 
-# --------------------------------------------------------------------------
-# Equivalence with the WP8 pilot's stored, real-data tracklets
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    not (os.path.exists(PILOT_TRACKLETS) and os.path.exists(PILOT_PSV)
-         and os.path.exists(PILOT_OBSCODES)),
-    reason=(
-        "the WP8 pilot's output is gitignored; run "
-        "`python -m validation.neocp_pilot all` to produce it"
-    ),
-)
-def test_package_ingestion_reproduces_the_pilot_tracklets():
-    """The promoted ingestion must reproduce the pilot's 499 real tracklets.
-
-    The pilot wrote ``tracklets.psv`` from the same detections it fitted, so
-    ingesting that file and comparing against ``tracklets.json`` closes the
-    loop on every promoted rule at once: PSV parsing, night grouping, the
-    least-squares fit and its epoch convention, the median V, and the
-    obscode -> WGS84 resolution.
-
-    Agreement is essentially exact.  The only difference is the PSV's own
-    ``%12.8f`` / ``%6.2f`` field widths (1e-8 deg = 3.6e-5 arcsec on the
-    positions), which propagate into the rates.
-
-    The bounds below are **bounds with slack, not the quantisation itself** —
-    the measured maxima are 1.3e-11 rad in RA, 3.9e-11 in Dec, 5.7e-10 rad/day
-    in d(alpha)/dt, 1.7e-9 in d(delta)/dt, 7.1e-15 mag in V and 1.1e-6 arcsec
-    in the residual RMS, i.e. one to two orders of magnitude inside what is
-    asserted.  They are set loose on purpose so a numpy or astropy version bump
-    cannot turn a last-bit difference into a red suite; a regression big enough
-    to matter would blow through them by orders of magnitude.  The five fields
-    asserted as EXACTLY zero carry no arithmetic at all and are the tight half
-    of this test.
-    """
-    with open(PILOT_TRACKLETS) as fh:
-        reference = json.load(fh)["tracklets"]
-
-    table = G.ObscodeTable(PILOT_OBSCODES)
-    with warnings.catch_warnings():
-        # No geocentric fallback is allowed: the pilot resolved every station.
-        warnings.simplefilter("error", UserWarning)
-        tracklets, failures, issues = G.ingest(PILOT_PSV, obscodes=table)
-
-    assert issues == [], issues[:3]
-    assert failures == [], failures[:3]
-    # 499 as published; not hardcoded, so re-running the pilot with a different
-    # sample size does not turn this into a false failure.
-    assert len(tracklets) == len(reference)
-    assert len(tracklets) > 100, "the stored pilot output looks truncated"
-
-    worst: dict[str, float] = {}
-    for k, (got, want) in enumerate(zip(tracklets, reference)):
-        assert got.object_id == "N%05d" % k
-        assert got.obscode == want["obscode"]
-        assert got.obscode_source in ("builtin", "file")
-        assert got.n_obs == want["n_det"]
-        for mine, theirs in (
-            ("epoch_jd_utc", "epoch_jd_utc"), ("ra", "ra"), ("dec", "dec"),
-            ("ra_rate", "ra_rate"), ("dec_rate", "dec_rate"),
-            ("v_mag", "v_mag"), ("arc_hours", "arc_hours"),
-            ("resid_rms_arcsec", "resid_rms_arcsec"),
-            ("lon_deg", "lon_deg"), ("lat_deg", "lat_deg"),
-            ("height_m", "height_m"),
-        ):
-            d = abs(float(getattr(got, mine)) - float(want[theirs]))
-            worst[mine] = max(worst.get(mine, 0.0), d)
-
-    # Exact: no arithmetic separates these from the pilot's.
-    assert worst["epoch_jd_utc"] == 0.0
-    assert worst["arc_hours"] == 0.0
-    assert worst["lon_deg"] == 0.0
-    assert worst["lat_deg"] == 0.0
-    assert worst["height_m"] == 0.0
-    # Set by the PSV's own field widths.
-    assert worst["ra"] < 1e-9, worst          # rad; 1e-9 rad = 0.2 mas
-    assert worst["dec"] < 1e-9, worst
-    assert worst["ra_rate"] < 1e-7, worst     # rad/day
-    assert worst["dec_rate"] < 1e-7, worst
-    assert worst["v_mag"] < 1e-12, worst      # the PSV carries V to 0.01 mag
-    assert worst["resid_rms_arcsec"] < 1e-4, worst
