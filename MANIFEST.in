@@ -4,7 +4,7 @@
 # The Rust crate is in the sdist even though installing the sdist never builds
 # it: the sdist is then a complete source release, and a downstream packager
 # (conda-forge, a distro, a site build) can produce the extension from it with
-#     tar xf ds42-<v>.tar.gz && cd ds42-<v> && maturin build --release
+#     tar xf pneo-<v>.tar.gz && cd pneo-<v> && maturin build --release
 # using the [tool.maturin] table in pyproject.toml, or with rust/build.sh.
 #
 # scripts/fetch_digest2_model.py is included for the same reason: it resolves

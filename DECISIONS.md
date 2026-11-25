@@ -1,4 +1,4 @@
-# ds42 Decision Log
+# pneo Decision Log
 
 *Append-only log of design decisions: what was decided, why, and what was considered
 instead. Referenced from [DESIGN.md](DESIGN.md) as [D-n]. All entries 2026-08-31 unless
@@ -129,7 +129,7 @@ q, e, i, H; 15 orbit classes; uniform angles) as the density for *both* the NEO 
 (undiscovered) variants selectable by flag; piecewise-constant evaluation first, with
 interpolation only as an explicit option.
 
-**Rationale.** (a) Isolates the methodological contribution: ds42 and digest2 then
+**Rationale.** (a) Isolates the methodological contribution: pneo and digest2 then
 share inputs exactly, so any performance difference is attributable to the math (Jacobian,
 marginalization, calibrated posterior) — the clean experiment for the paper. (b) Avoids a
 calibration seam: digest2's content is unrescaled 2011 S3M while NEOMOD3 is independently
@@ -198,7 +198,7 @@ the mode is gate-ineligible — comparison use only, both components clamped tog
 **Rationale.** Turns the WP7 same-inputs confound into a measurement. Results (gate_v0,
 20k): with the premise repaired everywhere, full-set ΔAUC = +0.0126 [+0.0048, +0.0217];
 the broken-subset WP7 gap decomposes as +0.0109 method − 0.0021 boundary handling (D-4's
-truncation was mildly *handicapping* ds42 there — WP7's number was conservative);
+truncation was mildly *handicapping* pneo there — WP7's number was conservative);
 and the clamp explains ~0.01% of digest2's 6.1× calibration overshoot (a correctly
 marginalized posterior absorbs the prior's faint-end change: predicted NEOs 187.6
 clamped vs 187.5 truncated vs 185 observed). See
@@ -213,7 +213,7 @@ measurable while doubling the deviation from D-4).
 **Decision.** The classify hot path is implemented twice: the original Python/numpy
 implementation remains the *reference backend* (unchanged, authoritative for semantics
 except at |dec| = 90° exactly — see DESIGN §2.3), and a Rust crate (rust/, PyO3, module
-`ds42._core`) provides the production backend — one fused per-node kernel, Jacobian
+`pneo._core`) provides the production backend — one fused per-node kernel, Jacobian
 via the exact Delaunay closed form (no per-node 6×6 or Kepler solve; the Python cond
 guard is ported exactly behind a reachability-premised prefilter with a measured 119×
 margin), process-lifetime CoreModel with content-fingerprinted caching, sigma-point-ready
@@ -221,7 +221,7 @@ margin), process-lifetime CoreModel with content-fingerprinted caching, sigma-po
 diagnostics-off zero-allocation mode, rayon batching with bit-reproducible results
 independent of thread count. Selection: `backend="auto"|"python"|"rust"` (auto = Rust if
 importable and the density pair is core-compatible, else silent fallback);
-DS42_BACKEND env overrides only with `python`/`rust`.
+PNEO_BACKEND env overrides only with `python`/`rust`.
 
 **Rationale.** Performance goal (DESIGN §1, issue #1): measured 12.0 ms/tracklet
 single-core at (1200,50) vs 482 ms Python (40×), 0.40 ms/tracklet batched at 96 threads;
@@ -243,11 +243,11 @@ rust/build.sh + atomic .so install into the editable tree).
 setuptools.build_meta) and installs as pure Python everywhere — no Rust toolchain
 required, yielding the numpy reference backend that `backend="auto"` degrades to.
 Release wheels are built by maturin driven as a CLI over the `[tool.maturin]` table
-(never as the build backend), carrying `ds42._core` as abi3-py311 — one wheel per
+(never as the build backend), carrying `pneo._core` as abi3-py311 — one wheel per
 platform (linux x86_64, macOS arm64, Windows x64 initially; the rest via sdist).
 Publishing: `.github/workflows/release.yml` on GitHub releases, PyPI Trusted Publishing
 (OIDC, environment `pypi`, no tokens); `workflow_dispatch` is a build-only rehearsal.
-No TestPyPI path (maintainer decision). The `ds42-fetch-model` console script gives
+No TestPyPI path (maintainer decision). The `pneo-fetch-model` console script gives
 wheel users the model download; a LICENSE file (BSD-3-Clause) now ships in both
 artifacts.
 
@@ -395,9 +395,9 @@ the NEOCP operational configuration") → superseded: extension+pchip composes a
 operationally eligible; there is no 0/0 nan any more for genuinely fully-truncated
 tracklets (policy) and the extension covers the measured H range.
 
-## D-20: The ds42 CLI (2026-09-02)
+## D-20: The pneo CLI (2026-09-02)
 
-**Decision.** The wheel ships a `ds42` console entry (stdlib argparse only — no CLI
+**Decision.** The wheel ships a `pneo` console entry (stdlib argparse only — no CLI
 dependencies; maintainer constraint) with `score` (observation files in, one row per
 tracklet out), `fetch-model`, and `fetch-obscodes`. Scoring defaults are the D-18/D-19
 **operational** configuration (All variant, h_extend_to = 30, h_interpolation none,
@@ -406,17 +406,17 @@ not the library defaults. `--workers` defaults to all cores (maintainer decision
 one batched rayon call on the Rust backend, a multiprocessing pool with per-worker
 model loading on the reference. Failure degrades per tracklet on every path; stdout
 carries only data; exit codes 0 (≥1 scored) / 1 (nothing scored) / 2 (configuration).
-Ingestion (`ds42.ingest`, also public API) is the NEOCP pilot's machinery promoted
+Ingestion (`pneo.ingest`, also public API) is the NEOCP pilot's machinery promoted
 into the package, equivalence-tested against the pilot's 499 stored real tracklets.
 
 **Deliberate divergences from digest2's ingestion, recorded rather than hidden:**
 1. *Blank band on MPC 80-column records* → treated as V (offset 0.0), where digest2
-   applies its −0.8 unknown-band fallback — a 0.8 mag difference. ds42's choice is
+   applies its −0.8 unknown-band fallback — a 0.8 mag difference. pneo's choice is
    the better default (V is the declared standardization target, D-5; −0.8 is digest2's
    crudest path); the divergence is stated in the docstrings and --help, and counted on
    stderr per run. The band-offset *table* itself is digest2's verbatim (verified
    entry-by-entry), plus the two-character ADES aliases digest2 lacks.
-2. *note2 filter*: digest2's 80-col parser accepts only note2 ∈ {C, S, B}; ds42
+2. *note2 filter*: digest2's 80-col parser accepts only note2 ∈ {C, S, B}; pneo
    accepts everything except space/roving/radar record types (skipped and counted).
 3. *Tracklet selection*: earliest same-night same-station set (deterministic from the
    file alone), where the pilot used the externally-known discovery station.
@@ -428,13 +428,13 @@ offered them nothing. The end-to-end CLI reproduces the pilot's real-data scores
 extended-vs-clamped agreement) and scores the 499-tracklet pilot sample in ~6.5 s.
 Known operational hazard, mitigated: stations outside the built-in 14-code table fall
 back to the geocentre (up to ~0.13 in p_neo for survey stations) — mitigations are the
-local obscodes table (`--obscodes` / `$DS42_OBSCODES` / `./data/ObsCodesF.html`,
-fetched once via `ds42 fetch-obscodes`), per-code warnings, `obscode_source` in the
+local obscodes table (`--obscodes` / `$PNEO_OBSCODES` / `./data/ObsCodesF.html`,
+fetched once via `pneo fetch-obscodes`), per-code warnings, `obscode_source` in the
 JSON output, and a run-level warning when >10% of tracklets used the fallback.
 
-## D-21: Project renamed digest42 → ds42 (2026-09-08)
+## D-21: Project renamed digest42 → pneo (2026-09-08)
 
-**Decision.** The project is renamed from digest42 to ds42, across the package, CLI,
+**Decision.** The project is renamed from digest42 to pneo, across the package, CLI,
 environment variable, Rust crate, build/release configuration, all documentation
 (including retroactively updating D-1 through D-20's self-references), and the paper
 manuscript. Third-party references (the MPC's digest2 tool; rlseaman/digest3) are

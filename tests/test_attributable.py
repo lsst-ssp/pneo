@@ -59,7 +59,7 @@ import numpy as np
 import pytest
 from astropy.time import Time, TimeDelta
 
-from ds42.attributable import (
+from pneo.attributable import (
     MPC_OBSCODES,
     Attributable,
     ephemeris_in_use,
@@ -328,7 +328,7 @@ def test_obscode_is_case_insensitive_and_stripped():
 
 
 def test_unknown_obscode_raises():
-    with pytest.raises(KeyError, match="not in the ds42 v0"):
+    with pytest.raises(KeyError, match="not in the pneo v0"):
         observer_state(_tdb(JD1), obscode="ZZZ")
 
 

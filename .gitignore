@@ -10,6 +10,6 @@ data/*
 
 # Rust core kernel build products (rust/build.sh rebuilds both)
 rust/target/
-src/ds42/_core*.so
+src/pneo/_core*.so
 
 .ipynb_checkpoints/

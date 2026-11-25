@@ -1,17 +1,17 @@
 name: Release
 
-# Publishing ds42 to PyPI.  Two artifact kinds, built by two tools, for the
+# Publishing pneo to PyPI.  Two artifact kinds, built by two tools, for the
 # reasons written down in pyproject.toml and RELEASING.md:
 #
 #   * one **sdist**, built by setuptools -- the whole source, Rust crate
 #     included, but installing it compiles nothing and yields the numpy
 #     reference implementation.  That is the fallback for every platform below
-#     that has no wheel: `pip install ds42` works there and
+#     that has no wheel: `pip install pneo` works there and
 #     `backend="auto"` degrades to "python", which is exactly the runtime
-#     contract ds42 already has.
+#     contract pneo already has.
 #   * one **wheel per platform**, built by `maturin build` over the
 #     `[tool.maturin]` table -- the same Python package plus the compiled
-#     `ds42._core`.  abi3-py311 means one wheel covers CPython >= 3.11, so
+#     `pneo._core`.  abi3-py311 means one wheel covers CPython >= 3.11, so
 #     the matrix is per platform, not per platform x interpreter.
 #
 # Triggers:
@@ -105,9 +105,9 @@ jobs:
               capture_output=True, text=True, check=True).stdout.strip()
           print(f"setuptools-scm   resolved version    {version}")
 
-          src = open("src/ds42/__init__.py", encoding="utf-8").read()
+          src = open("src/pneo/__init__.py", encoding="utf-8").read()
           if re.search(r'^__version__\s*=\s*"\d', src, re.M):
-              fail.append("src/ds42/__init__.py hardcodes __version__; it "
+              fail.append("src/pneo/__init__.py hardcodes __version__; it "
                           "must read importlib.metadata")
 
           # The crate is version-less (publish = false): the package version
@@ -120,13 +120,13 @@ jobs:
               fail.append("rust/Cargo.toml must set publish = false")
 
           # The packaging invariants the wheel depends on.  Losing module-name
-          # would silently publish the extension as a top-level `ds42_core`
-          # module that `ds42.backend` never looks for.
+          # would silently publish the extension as a top-level `pneo_core`
+          # module that `pneo.backend` never looks for.
           mat = pp.get("tool", {}).get("maturin", {})
           print(f"[tool.maturin]   module-name         {mat.get('module-name')}")
           print(f"[tool.maturin]   python-source       {mat.get('python-source')}")
-          if mat.get("module-name") != "ds42._core":
-              fail.append("[tool.maturin] module-name must be 'ds42._core'")
+          if mat.get("module-name") != "pneo._core":
+              fail.append("[tool.maturin] module-name must be 'pneo._core'")
           if mat.get("python-source") != "src":
               fail.append("[tool.maturin] python-source must be 'src'")
           where = pp["tool"]["setuptools"]["packages"]["find"]["where"]
@@ -171,7 +171,7 @@ jobs:
               sys.exit(1)
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"version={version}\n")
-          print(f"OK: ds42 {version}")
+          print(f"OK: pneo {version}")
           PY
 
   # ---------------------------------------------------------------------------
@@ -372,7 +372,7 @@ jobs:
       - name: Import the extension and A/B the two backends
         working-directory: ${{ runner.temp }}
         env:
-          DS42_BACKEND: rust
+          PNEO_BACKEND: rust
         run: |
           "$RUNNER_TEMP/venv/bin/python" \
             "$GITHUB_WORKSPACE/.github/scripts/smoke_classify.py" rust
@@ -380,11 +380,11 @@ jobs:
       # A fast subset of the suite, run against the installed wheel from a
       # directory that contains nothing but the copied test files -- no
       # pyproject.toml, no src/, no conftest.py, so pytest cannot pick up the
-      # repository as rootdir and `import ds42` can only resolve to the
+      # repository as rootdir and `import pneo` can only resolve to the
       # wheel.  The full suite is CI's job, on both backends (ci.yml).
-      - name: pytest subset from the installed wheel (DS42_BACKEND=rust)
+      - name: pytest subset from the installed wheel (PNEO_BACKEND=rust)
         env:
-          DS42_BACKEND: rust
+          PNEO_BACKEND: rust
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/wheel-tests"
@@ -438,7 +438,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: pypi
-      url: https://pypi.org/p/ds42
+      url: https://pypi.org/p/pneo
     permissions:
       id-token: write
     steps:
@@ -452,7 +452,7 @@ jobs:
         run: |
           set -euo pipefail
           ls -l dist
-          test -f "dist/ds42-${{ needs.version-check.outputs.version }}.tar.gz"
+          test -f "dist/pneo-${{ needs.version-check.outputs.version }}.tar.gz"
           n="$(find dist -maxdepth 1 -name '*.whl' | wc -l)"
           echo "$n wheels + 1 sdist"
           # One per row of the `wheels` matrix -- bump this when the matrix

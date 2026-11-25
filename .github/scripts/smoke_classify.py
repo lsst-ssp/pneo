@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test an *installed* ds42 distribution, from outside the repo.
+"""Smoke-test an *installed* pneo distribution, from outside the repo.
 
     python .github/scripts/smoke_classify.py rust     # a wheel: kernel present
     python .github/scripts/smoke_classify.py python   # the sdist: no kernel
@@ -12,14 +12,14 @@ memory and passes the observer state explicitly, so it needs neither
 
 ``rust`` mode (the wheels) asserts, in order of what it would catch:
 
-1. ``ds42._core`` imports from the installed package, ``core_available()``
+1. ``pneo._core`` imports from the installed package, ``core_available()``
    is true and ``backend="auto"`` resolves to ``"rust"`` -- i.e. the wheel
    really carries the extension and the module landed at the name
-   ``ds42._core``, which is the whole point of the mixed maturin layout (a
-   wheel naming it ``ds42_core`` would import fine as a top-level module
+   ``pneo._core``, which is the whole point of the mixed maturin layout (a
+   wheel naming it ``pneo_core`` would import fine as a top-level module
    and still fail here);
 2. the extension and the Python package come from the same release
-   (``_core.__version__ == ds42.__version__``);
+   (``_core.__version__ == pneo.__version__``);
 3. the shipped kernel and the shipped numpy reference produce the same
    posterior on the same toy tracklet at a coarse grid.  A wheel built against
    the wrong crate, or with a mismatched model layout, does not survive this.
@@ -35,22 +35,22 @@ from __future__ import annotations
 import os
 import sys
 
-# The rust-mode A/B below has to be a real A/B: `DS42_BACKEND` names a
+# The rust-mode A/B below has to be a real A/B: `PNEO_BACKEND` names a
 # *concrete* backend and overrides the `backend=` argument (see
-# ds42.backend), so a `DS42_BACKEND=rust` inherited from the job
+# pneo.backend), so a `PNEO_BACKEND=rust` inherited from the job
 # environment would route the "python" call through the kernel as well and the
 # comparison would be vacuous.  Drop it here -- the workflow sets it for the
 # pytest subset, which is where it belongs.  tests/test_backend_parity.py does
 # the same thing for the same reason.
-_forced = os.environ.pop("DS42_BACKEND", None)
+_forced = os.environ.pop("PNEO_BACKEND", None)
 
 import numpy as np  # noqa: E402
 from astropy.time import Time  # noqa: E402
 
-import ds42  # noqa: E402
-from ds42 import Attributable, classify  # noqa: E402
-from ds42.backend import core_available, resolve_backend  # noqa: E402
-from ds42.population import Digest2Histogram  # noqa: E402
+import pneo  # noqa: E402
+from pneo import Attributable, classify  # noqa: E402
+from pneo.backend import core_available, resolve_backend  # noqa: E402
+from pneo.population import Digest2Histogram  # noqa: E402
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "rust"
 if mode not in ("rust", "python"):
@@ -59,24 +59,24 @@ if mode not in ("rust", "python"):
 print(f"mode         {mode}")
 print(f"python       {sys.version.split()[0]}")
 print(f"numpy        {np.__version__}")
-print(f"ds42     {ds42.__version__} from {ds42.__file__}")
-print(f"DS42_BACKEND in the environment: {_forced!r} (ignored here)")
+print(f"pneo     {pneo.__version__} from {pneo.__file__}")
+print(f"PNEO_BACKEND in the environment: {_forced!r} (ignored here)")
 
 # --- the extension: present and named right, or absent and degraded ---------
 if mode == "rust":
-    import ds42._core as core
+    import pneo._core as core
 
-    print(f"ds42._core {core.__version__} from {core.__file__}")
-    assert core_available(), "ds42._core did not import from the installed wheel"
+    print(f"pneo._core {core.__version__} from {core.__file__}")
+    assert core_available(), "pneo._core did not import from the installed wheel"
     assert resolve_backend("auto") == "rust", resolve_backend("auto")
     assert resolve_backend("rust") == "rust"
-    assert core.__version__ == ds42.__version__, (
+    assert core.__version__ == pneo.__version__, (
         f"extension version {core.__version__} != package version "
-        f"{ds42.__version__}"
+        f"{pneo.__version__}"
     )
 else:
     assert not core_available(), (
-        "a ds42._core extension is importable from an install that must "
+        "a pneo._core extension is importable from an install that must "
         "not have one"
     )
     assert resolve_backend("auto") == "python", resolve_backend("auto")

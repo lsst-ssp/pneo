@@ -3,14 +3,14 @@
 
     python .github/scripts/check_metadata.py <dir with the sdist and the wheels>
 
-ds42 builds its sdist with setuptools and its wheels with maturin (see
+pneo builds its sdist with setuptools and its wheels with maturin (see
 pyproject.toml).  Both read the same ``[project]`` table, so they *cannot*
 disagree -- this check is what makes that a fact rather than a belief.  It is
 the guard against the one real hazard of the two-tool split: a future
 `[project]` key that one tool honours and the other ignores, shipped as an sdist
 and a wheel that promise different dependencies under the same version.
 
-Standard library only, and no ds42 import.
+Standard library only, and no pneo import.
 """
 
 from __future__ import annotations

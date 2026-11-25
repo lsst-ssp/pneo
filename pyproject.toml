@@ -1,18 +1,18 @@
-# ds42 packaging.
+# pneo packaging.
 #
 # Two artifacts are published, built by two different tools on purpose (see
 # RELEASING.md):
 #
 #   * the **sdist**, built by setuptools (the `[build-system]` backend below).
 #     It carries the Python package *and* the Rust crate sources, but installing
-#     it compiles nothing: `pip install ds42` from source needs no Rust
+#     it compiles nothing: `pip install pneo` from source needs no Rust
 #     toolchain and yields the numpy reference implementation, which is exactly
 #     what `backend="auto"` degrades to at run time.  This is what keeps the
 #     package installable on every platform we do not ship a wheel for.
 #   * the **wheels**, built by `maturin` driven as a plain CLI over the
 #     `[tool.maturin]` table below (`maturin build`, never as the PEP 517
 #     backend).  They carry the same Python package plus the compiled
-#     `ds42._core` extension.  Because the crate is built against the
+#     `pneo._core` extension.  Because the crate is built against the
 #     stable ABI (abi3-py311), one wheel per platform covers CPython >= 3.11.
 #
 # Consequences, all deliberate:
@@ -33,7 +33,7 @@ requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ds42"
+name = "pneo"
 # The version is derived from git by setuptools-scm: a `vX.Y.Z` tag IS the
 # version (and pushing one publishes the release -- see RELEASING.md); between
 # tags, dev installs get `X.Y.(Z+1).devN+g<hash>`.  There is no hand-maintained
@@ -73,19 +73,19 @@ dependencies = [
 dev = ["pytest>=7"]
 
 [project.scripts]
-ds42 = "ds42.cli:main"
-ds42-fetch-model = "ds42.fetch_model:main"
+pneo = "pneo.cli:main"
+pneo-fetch-model = "pneo.fetch_model:main"
 
 [project.urls]
-Homepage = "https://github.com/mjuric/ds42"
-Repository = "https://github.com/mjuric/ds42"
-Issues = "https://github.com/mjuric/ds42/issues"
+Homepage = "https://github.com/lsst-ssp/pneo"
+Repository = "https://github.com/lsst-ssp/pneo"
+Issues = "https://github.com/lsst-ssp/pneo/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 # The compiled extension and the population model are deliberately absent from
-# the setuptools build: `src/ds42/_core.abi3.so` is a build product of
+# the setuptools build: `src/pneo/_core.abi3.so` is a build product of
 # rust/build.sh (and is what maturin puts in the wheel itself), and
 # `data/digest2.model.csv` is fetched at first use by
 # scripts/fetch_digest2_model.py.  Neither is package data.  MANIFEST.in states
@@ -93,13 +93,13 @@ where = ["src"]
 
 [tool.maturin]
 # Mixed Python/Rust layout: the Python package is the authoritative one at
-# `src/ds42` and the crate contributes exactly one submodule to it.  Naming
-# the module `ds42._core` (rather than letting maturin default to the crate
-# name, `ds42_core`) is what makes the wheel a drop-in for the layout
+# `src/pneo` and the crate contributes exactly one submodule to it.  Naming
+# the module `pneo._core` (rather than letting maturin default to the crate
+# name, `pneo_core`) is what makes the wheel a drop-in for the layout
 # rust/build.sh already installs into.  `python-source` must stay in sync with
 # `[tool.setuptools.packages.find] where`.
 python-source = "src"
-module-name = "ds42._core"
+module-name = "pneo._core"
 manifest-path = "rust/Cargo.toml"
 # maturin copies `python-source` into the wheel verbatim, which would otherwise
 # pick up a developer's stale bytecode.  (A stale `_core.abi3.so` from

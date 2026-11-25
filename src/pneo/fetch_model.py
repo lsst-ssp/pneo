@@ -1,12 +1,12 @@
 """Fetch the MPC digest2 population model (installed console script).
 
-``ds42-fetch-model [--out PATH]`` downloads ``digest2.model.csv`` from the
+``pneo-fetch-model [--out PATH]`` downloads ``digest2.model.csv`` from the
 MPC's public repository (Git LFS media endpoint), verifies its format and
-checksum, and writes it where ds42 can use it. This is the installed-wheel
+checksum, and writes it where pneo can use it. This is the installed-wheel
 counterpart of ``scripts/fetch_digest2_model.py`` (which now delegates here).
 
 The mpc-public repository carries no LICENSE file (checked 2026-08-31); the
-model is downloaded at use time and never redistributed with ds42.
+model is downloaded at use time and never redistributed with pneo.
 """
 
 from __future__ import annotations

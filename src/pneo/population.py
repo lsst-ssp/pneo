@@ -95,7 +95,7 @@ instead of 0.  Everything else — q/e/i truncation, and H < 0 — is untouched.
 The *lower* half of digest2's clamp is deliberately NOT emulated: digest2's
 ``for (ih = 0; h >= hpart[ih] && ih < HX - 1; ++ih)`` also leaves negative H
 in bin 0, so digest2 treats the first H bin as (-inf, 6).  Implied H < 0 means
-an object brighter than absolute magnitude 0 — at the geometries ds42
+an object brighter than absolute magnitude 0 — at the geometries pneo
 integrates over (rho >= 0.01 AU, V >= 14) that never occurs, so emulating it
 would change nothing measurable while making the comparison mode a
 two-sided deviation from D-4 instead of the one-sided one under study.
@@ -309,7 +309,7 @@ __all__ = [
 class PopulationDensity(ABC):
     """An absolutely calibrated population density n_C(elements, H).
 
-    The load-bearing abstraction of ds42 (DESIGN §3): the classifier is
+    The load-bearing abstraction of pneo (DESIGN §3): the classifier is
     generic over implementations of this interface.
     """
 
@@ -632,7 +632,7 @@ H_INTERPOLATIONS = ("none", "pchip")
 # ---------------------------------------------------------------------------
 # Monotone piecewise-cubic (PCHIP) machinery
 #
-# Implemented here rather than imported: scipy is not a ds42 dependency
+# Implemented here rather than imported: scipy is not a pneo dependency
 # [D-9].  This is the standard Fritsch–Carlson / Fritsch–Butland construction
 # (Fritsch & Carlson 1980, SIAM J. Numer. Anal. 17, 238; Fritsch & Butland
 # 1984, SIAM J. Sci. Stat. Comput. 5, 300), which is also what
@@ -925,7 +925,7 @@ class Digest2Histogram(PopulationDensity):
     Reinstates ``d2model.c:hToBin``'s clamp of H >= 24 into the final bin, so
     that H >= 25.5 evaluates to the top bin's density (per unit H, unchanged)
     instead of 0.  This exists to make the DESIGN §4.2 head-to-head a
-    controlled experiment: with the clamp on, digest2 and ds42 consume the
+    controlled experiment: with the clamp on, digest2 and pneo consume the
     *same* effective model on every tracklet, so the residual gap is method
     alone.  See the module docstring for exactly which half of digest2's clamp
     is emulated (the H >= 25.5 half) and which is not (H < 0).
@@ -1174,7 +1174,7 @@ class Digest2Histogram(PopulationDensity):
         ``h_extend_to`` [D-19] is passed to both components too, and for a
         third instance of the same reason: extending only the NEO side would
         add the entire faint-end continuation to the numerator of P(NEO) and
-        nothing to the denominator.  :func:`ds42.backend.check_component_pair`
+        nothing to the denominator.  :func:`pneo.backend.check_component_pair`
         enforces the pairing at every classify entry point.
 
         Implementation note: digest2's named classes overlap and do not cover
@@ -1635,7 +1635,7 @@ class Digest2Histogram(PopulationDensity):
         ``dq de di (2 pi)^3``.  Exposed so the Rust backend can copy the same
         numbers and evaluate the same expression — the two backends are
         bit-identical because they share the coefficients, not because they
-        each re-derive them (see ``ds42.backend``).  Read-only.
+        each re-derive them (see ``pneo.backend``).  Read-only.
         """
         return self._h_coeffs
 

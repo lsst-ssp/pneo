@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark the two ds42 classify backends.
+"""Benchmark the two pneo classify backends.
 
 Reports, at the production grid resolution (n_rho, n_rhodot) = (1200, 50):
 
@@ -32,10 +32,10 @@ from astropy.time import Time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "src"))
 
-from ds42.attributable import Attributable  # noqa: E402
-from ds42.backend import core_available  # noqa: E402
-from ds42.classifier import classify, classify_many  # noqa: E402
-from ds42.population import Digest2Histogram  # noqa: E402
+from pneo.attributable import Attributable  # noqa: E402
+from pneo.backend import core_available  # noqa: E402
+from pneo.classifier import classify, classify_many  # noqa: E402
+from pneo.population import Digest2Histogram  # noqa: E402
 
 GEN = os.path.join(REPO, "validation", "output", "gate_v0", "gen.npz")
 MODEL = os.path.join(REPO, "data", "digest2.model.csv")

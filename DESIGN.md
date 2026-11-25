@@ -1,6 +1,6 @@
-# ds42 Design
+# pneo Design
 
-*Design document for the ds42 Bayesian tracklet classifier. Status: design phase
+*Design document for the pneo Bayesian tracklet classifier. Status: design phase
 (2026-08). Decisions referenced as [D-n] are recorded in [DECISIONS.md](DECISIONS.md);
 population-model inputs are surveyed in [POPULATION_MODELS.md](POPULATION_MODELS.md).*
 
@@ -14,7 +14,7 @@ everything else (MBA, Trojan, TNO, …); we do not care which non-NEO subclass a
 belongs to [D-1].
 
 **Why not digest2.** digest2 (Keys et al. 2019) answers the same question with a heuristic
-score. ds42 differs in method: a proper Bayesian formulation with (a) the exact
+score. pneo differs in method: a proper Bayesian formulation with (a) the exact
 change-of-measure Jacobian between element space and observable space, (b) marginalization
 over the admissible region, (c) absolutely calibrated population components and therefore
 no tunable prior, and (d) an output that is a probability, not a score. To make the
@@ -37,7 +37,7 @@ low-latency scoring** — scoring a tracklet in the alert-processing path at ~10
 latency, i.e. at or below digest2's per-tracklet cost while computing the full Bayesian
 measure. The optimization path (fused Kepler/Jacobian, H-bin-edge-aware ρ nodes,
 cross-tracklet vectorization, JAX/GPU) is tracked in
-[issue #1](https://github.com/mjuric/ds42/issues/1); any change must re-pass the
+[issue #1](https://github.com/lsst-ssp/pneo/issues/1); any change must re-pass the
 §4.1 gate with no growth in the HPD estimator gap.
 
 ## 2. Formalism
@@ -290,7 +290,7 @@ Self-contained Python (numpy-vectorized); the two-body transforms and Jacobians 
 written in-repo rather than imported from pyoorb/adam_core [D-9].
 
 ```
-ds42/
+pneo/
   attributable.py   Attributable + epoch + (future) covariance; observer state from ephemeris
   ranging.py        admissible region construction; (ρ, ρ̇) grids / samples
   transforms.py     (A, ρ, ρ̇) → state → elements; H(V, ρ); Jacobians
@@ -389,13 +389,13 @@ stated rather than discovered:
 
 ### 4.2 Method comparison on shared inputs (v0)
 
-digest2 vs. ds42 on the same self-generated sets: both codes use the same population
+digest2 vs. pneo on the same self-generated sets: both codes use the same population
 file, and the test population matches that shared prior, so the ranking (ROC) gap isolates
 the value of the Jacobian + marginalization + calibrated posterior. This is the clean
 experiment for the methods paper.
 
 One caveat to the "same inputs" premise (WP4 review): digest2's lookup clamps $H \ge 24$
-into a $[24, \infty)$ top bin, while ds42 truncates at 25.5 per D-4 — so for ranging
+into a $[24, \infty)$ top bin, while pneo truncates at 25.5 per D-4 — so for ranging
 nodes with implied $H > 25.5$ the two codes consume *different* effective models. The
 comparison must report the fraction of tracklets with non-negligible admissible-region
 measure at $H > 25.5$ (the §2.6 diagnostic) and either exclude them or discuss them

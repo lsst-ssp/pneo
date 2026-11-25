@@ -11,14 +11,14 @@ Layout of the file:
 1. kernel-level parity: bin lookup (bit-exact, including edges, the D-14 clamp,
    NaN/inf), rho node placement (bit-exact), admissible intervals, elements,
    H(V, rho), and the closed-form |J| against ``transforms.ranging_jacobian_det``;
-2. end-to-end parity of :func:`ds42.classify` on ~200 diverse tracklets;
+2. end-to-end parity of :func:`pneo.classify` on ~200 diverse tracklets;
 3. the sigma-point (K > 1) path against an explicit Python-side weighted mean;
 4. per-node diagnostics arrays;
 5. a representative subset of the existing WP5 tests re-run under both backends
    through the ``backend`` fixture;
 6. regression tests for each finding of the adversarial review — hostile grid
    sizes, the bin-shape overflow, the bounds-checked table read, the
-   content-aware model cache, ``DS42_BACKEND=auto`` semantics, the
+   content-aware model cache, ``PNEO_BACKEND=auto`` semantics, the
    perihelion coverage of the conditioning prefilter, and the one **expected**
    divergence (the reference's Jacobian at ``|dec| = 90`` deg exactly, recorded
    as a strict xfail because the Rust value is the correct one there).
@@ -36,23 +36,23 @@ import numpy as np
 import pytest
 from astropy.time import Time
 
-from ds42 import transforms as T
-from ds42.attributable import Attributable
-from ds42.backend import core_available, resolve_backend, rho_axis
-from ds42.classifier import classify, classify_many
-from ds42.constants import G_SLOPE_DEFAULT, MU_SUN
-from ds42.population import (
+from pneo import transforms as T
+from pneo.attributable import Attributable
+from pneo.backend import core_available, resolve_backend, rho_axis
+from pneo.classifier import classify, classify_many
+from pneo.constants import G_SLOPE_DEFAULT, MU_SUN
+from pneo.population import (
     E_EDGES,
     H_EDGES,
     I_EDGES,
     Q_EDGES,
     Digest2Histogram,
 )
-from ds42.ranging import admissible_rhodot_interval, build_grid
+from pneo.ranging import admissible_rhodot_interval, build_grid
 
 pytestmark = pytest.mark.skipif(
     not core_available(),
-    reason="ds42._core is not built (run rust/build.sh)",
+    reason="pneo._core is not built (run rust/build.sh)",
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -74,7 +74,7 @@ PROD = dict(n_rho=1200, n_rhodot=50)
 
 @pytest.fixture(autouse=True)
 def _isolate_backend_env(monkeypatch):
-    """Ignore any inherited ``DS42_BACKEND``.
+    """Ignore any inherited ``PNEO_BACKEND``.
 
     This file drives both backends explicitly through the ``backend=``
     argument; a global override would silently turn every parity comparison
@@ -82,7 +82,7 @@ def _isolate_backend_env(monkeypatch):
     two tests that care about the environment variable set it themselves, and
     the ``backend`` fixture below sets it after this one has cleared it.
     """
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
 
 
 @pytest.fixture(scope="module")
@@ -101,7 +101,7 @@ def clamped_pair():
 
 @pytest.fixture(scope="module")
 def core():
-    from ds42 import _core
+    from pneo import _core
 
     return _core
 
@@ -179,7 +179,7 @@ def _synthetic_corners():
 )
 def test_bin_index_is_bit_exact(core, edges_name):
     """`_core.bin_index` reproduces `population._bin_index` exactly."""
-    from ds42.population import _bin_index
+    from pneo.population import _bin_index
 
     edges = {"q": Q_EDGES, "e": E_EDGES, "i": I_EDGES, "h": H_EDGES}[edges_name]
     rng = np.random.default_rng(7)
@@ -217,7 +217,7 @@ def test_density_lookup_is_bit_exact(core, clamp):
     other = Digest2Histogram(
         counts[::-1].copy(), "other", h_top_bin_infinite=clamp
     )
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     cm = core_model_for(neo, other)
 
@@ -274,7 +274,7 @@ def test_rho_axis_matches_build_grid(d2pair):
     on the machine and the libm, not just on the numpy version.  CI on a
     different CPU caught it.)
     """
-    from ds42.backend import rho_axis
+    from pneo.backend import rho_axis
 
     neo, other = d2pair
     att, R, V = _gate_tracklets(1, seed=11)[0]
@@ -337,8 +337,8 @@ def test_parity_survives_a_differently_rounding_geomspace(d2pair, monkeypatch):
     current one both sides consume the same array, so the grid stays bit-exact
     and the parity bars hold -- on any numpy, any CPU, any libm.
     """
-    from ds42 import ranging
-    from ds42.backend import rho_axis
+    from pneo import ranging
+    from pneo.backend import rho_axis
 
     real_geomspace = np.geomspace
 
@@ -421,7 +421,7 @@ def test_admissible_interval_convention_on_empty_rows(d2pair, core):
     V = np.array([0.0155, 0.0062, 0.0027])
     att = Attributable(ra=1.0, dec=0.2, ra_rate=0.6, dec_rate=0.2,
                        epoch=epoch, v_mag=20.0)
-    from ds42.backend import rho_axis
+    from pneo.backend import rho_axis
 
     rho_nodes, _ = rho_axis(0.01, 100.0, FAST["n_rho"])
     lo, hi = admissible_rhodot_interval(att, R, V, rho_nodes)
@@ -523,11 +523,11 @@ def test_closed_form_jacobian_matches_the_6x6(core):
 
 
 def _d42_warnings(records):
-    """(category, message) for the warnings ds42 itself raises."""
+    """(category, message) for the warnings pneo itself raises."""
     return [
         (w.category, str(w.message))
         for w in records
-        if str(w.message).startswith("ds42.")
+        if str(w.message).startswith("pneo.")
     ]
 
 
@@ -724,7 +724,7 @@ def test_end_to_end_parity_on_corner_geometries(d2pair):
             warnings.simplefilter("always")
             rr = classify(att, neo, other, R, V, backend="rust", **FAST)
         _compare(rp, rr, name)
-        # Identical warnings -- restricted to ds42's own, which are the
+        # Identical warnings -- restricted to pneo's own, which are the
         # contract.  numpy warnings are NOT part of it: the reference path
         # evaluates a 6x6 determinant per node and leaks e.g. "divide by zero
         # encountered in det" at extreme rho, which the closed form has no
@@ -820,7 +820,7 @@ def test_batch_is_thread_count_invariant(d2pair):
 
 def test_sigma_points_are_a_weighted_average(d2pair, core):
     """K = 3 with weights == the Python-side weighted mean of 3 classify calls."""
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     neo, other = d2pair
     cm = core_model_for(neo, other)
@@ -890,7 +890,7 @@ def test_sigma_points_are_a_weighted_average(d2pair, core):
 
 
 def test_k1_with_unit_weight_is_the_plain_path(d2pair, core):
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     neo, other = d2pair
     cm = core_model_for(neo, other)
@@ -910,7 +910,7 @@ def test_k1_with_unit_weight_is_the_plain_path(d2pair, core):
 
 
 def test_sigma_points_reject_diagnostics(d2pair, core):
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     neo, other = d2pair
     cm = core_model_for(neo, other)
@@ -1080,10 +1080,10 @@ def test_plot_method_works_on_the_rust_result(d2pair):
 def test_env_var_overrides_the_argument(monkeypatch, d2pair):
     neo, other = d2pair
     att, R, V = _gate_tracklets(1, seed=555)[0]
-    monkeypatch.setenv("DS42_BACKEND", "python")
+    monkeypatch.setenv("PNEO_BACKEND", "python")
     assert resolve_backend("rust") == "python"
     a = classify(att, neo, other, R, V, backend="rust", **FAST)
-    monkeypatch.delenv("DS42_BACKEND")
+    monkeypatch.delenv("PNEO_BACKEND")
     b = classify(att, neo, other, R, V, backend="python", **FAST)
     assert a.lambda_neo == b.lambda_neo
 
@@ -1097,8 +1097,8 @@ def test_bad_backend_name_raises(d2pair):
 
 def test_unsupported_model_falls_back_under_auto_and_raises_under_rust(d2pair):
     """A custom PopulationDensity is a fallback under auto, an error under rust."""
-    from ds42.backend import ModelNotSupported
-    from ds42.population import PopulationDensity
+    from pneo.backend import ModelNotSupported
+    from pneo.population import PopulationDensity
 
     class Flat(PopulationDensity):
         parameterization = "qei"
@@ -1122,14 +1122,14 @@ def test_unsupported_model_falls_back_under_auto_and_raises_under_rust(d2pair):
 
 
 def test_core_model_is_cached(d2pair):
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     neo, other = d2pair
     assert core_model_for(neo, other) is core_model_for(neo, other)
 
 
 def test_core_model_rejects_mismatched_edges(d2pair):
-    from ds42.backend import ModelNotSupported, core_model_for
+    from pneo.backend import ModelNotSupported, core_model_for
 
     neo, other = d2pair
 
@@ -1163,7 +1163,7 @@ def test_hostile_grid_sizes_raise_cleanly(d2pair, core):
     uninterruptible hang; a negative count raised OverflowError instead of the
     ValueError the Python reference gives.
     """
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     neo, other = d2pair
     cm = core_model_for(neo, other)
@@ -1229,7 +1229,7 @@ def test_core_model_rejects_overflowing_and_invalid_bin_structures(core):
     length check and then be indexed ~2**64 elements out of bounds — a
     reproducible SIGSEGV from pure Python through the public `CoreModel`.
     """
-    from ds42.backend import ModelNotSupported, core_model_for
+    from pneo.backend import ModelNotSupported, core_model_for
 
     big = 65536
     edges = [np.arange(big + 1, dtype=float) for _ in range(4)]
@@ -1346,21 +1346,21 @@ def test_model_cache_tracks_in_place_mutation(d2pair):
 
 def test_env_auto_does_not_override_an_explicit_argument(monkeypatch, d2pair):
     """Review finding 8: env `auto` means "no preference", not "override"."""
-    from ds42.backend import requested_backend
+    from pneo.backend import requested_backend
 
     for value in ("auto", "  AUTO  ", "Auto"):
-        monkeypatch.setenv("DS42_BACKEND", value)
+        monkeypatch.setenv("PNEO_BACKEND", value)
         assert requested_backend("python") == "python"
         assert requested_backend("rust") == "rust"
         assert requested_backend(None) == "auto"
         assert resolve_backend("python") == "python"
     # The two concrete names still override.
-    monkeypatch.setenv("DS42_BACKEND", "python")
+    monkeypatch.setenv("PNEO_BACKEND", "python")
     assert requested_backend("rust") == "python"
-    monkeypatch.setenv("DS42_BACKEND", "rust")
+    monkeypatch.setenv("PNEO_BACKEND", "rust")
     assert requested_backend("python") == "rust"
-    monkeypatch.setenv("DS42_BACKEND", "nonsense")
-    with pytest.raises(ValueError, match="DS42_BACKEND"):
+    monkeypatch.setenv("PNEO_BACKEND", "nonsense")
+    with pytest.raises(ValueError, match="PNEO_BACKEND"):
         requested_backend("python")
 
 
@@ -1519,12 +1519,12 @@ def backend(request, monkeypatch):
     """Pin the process default backend for the duration of one test.
 
     Existing tests do not take a ``backend`` argument, so the switch is made
-    through ``DS42_BACKEND`` — which is exactly the knob a user would use
+    through ``PNEO_BACKEND`` — which is exactly the knob a user would use
     to re-run a whole suite on the kernel.
     """
     if request.param == "rust" and not core_available():  # pragma: no cover
         pytest.skip("rust backend unavailable")
-    monkeypatch.setenv("DS42_BACKEND", request.param)
+    monkeypatch.setenv("PNEO_BACKEND", request.param)
     return request.param
 
 
@@ -1603,7 +1603,7 @@ def test_pchip_density_lookup_is_bit_exact(core, pchip_pair):
     exercised at 0 and at one ulp below the interval width), plus +/-inf, NaN
     and the out-of-support tails.
     """
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     neo, other = pchip_pair
     cm = core_model_for(neo, other)
@@ -1729,7 +1729,7 @@ def test_model_cache_distinguishes_the_h_interpolation_mode(d2pair, pchip_pair):
     the mode would hand back the piecewise-constant handle and silently score
     a different model — the same failure the D-14 clamp flag once had.
     """
-    from ds42.backend import _fingerprint, core_model_for
+    from pneo.backend import _fingerprint, core_model_for
 
     hist_neo, hist_other = d2pair
     sm_neo, sm_other = pchip_pair
@@ -1754,7 +1754,7 @@ def test_declared_h_interpolation_without_coefficients_is_refused(pchip_pair):
     also fail loudly on such an object) and an explicit `backend="rust"`
     raises.  It must never be scored as if it were piecewise constant.
     """
-    from ds42.backend import ModelNotSupported, core_model_for
+    from pneo.backend import ModelNotSupported, core_model_for
 
     class Liar:
         def __init__(self, src):
@@ -1863,7 +1863,7 @@ def test_mixed_mode_component_pairs_are_refused(core, d2pair, pchip_pair,
     reference can do this and the kernel cannot" and makes `auto` fall back —
     which here would score the artifact instead of refusing it.
     """
-    from ds42.backend import (ModelNotSupported, check_component_pair,
+    from pneo.backend import (ModelNotSupported, check_component_pair,
                                   core_model_for)
 
     hist_neo, hist_other = d2pair
@@ -1905,7 +1905,7 @@ def test_mixed_mode_guard_does_not_fire_on_matched_or_unaware_components(
     stand in for both flags; and differing `label`/`variant`/`parameterization`
     are NOT the guard's business.
     """
-    from ds42.backend import check_component_pair
+    from pneo.backend import check_component_pair
 
     class Minimal:
         parameterization = "aei"
@@ -1928,9 +1928,9 @@ def test_mixed_mode_artifact_is_real_and_the_guard_is_what_stops_it(
     tracklets.  If this ever comes out negligible the guard could be argued
     down; recording the number is what makes that argument checkable.
     """
-    from ds42.backend import (_build_core_model, _edges_of, _table_of,
+    from pneo.backend import (_build_core_model, _edges_of, _table_of,
                                   core_model_for)
-    from ds42 import _core
+    from pneo import _core
 
     hist_neo, hist_other = d2pair
     sm_neo, sm_other = pchip_pair
@@ -1987,7 +1987,7 @@ def test_mixed_mode_artifact_is_real_and_the_guard_is_what_stops_it(
 # D-19 — the finite H extension across the backend boundary
 #
 # The kernel needed NO change for this mode: the H axis length and the H edge
-# array are data-driven (`rust/src/model.rs` header), and `ds42.backend`
+# array are data-driven (`rust/src/model.rs` header), and `pneo.backend`
 # hands over the already-extended table / edges / coefficients.  These tests
 # are what turns "no change needed" from an assertion into a measurement — the
 # lookup is asserted bit-equal, the end-to-end Lambdas are asserted at the
@@ -2059,7 +2059,7 @@ def test_extended_density_lookup_is_bit_exact(core, ext_pair, ext_pchip_pair,
     is exercised at, one ulp below and one ulp above), plus +/-inf, NaN, and
     both out-of-support tails.
     """
-    from ds42.backend import core_model_for
+    from pneo.backend import core_model_for
 
     pair = ext_pair if which == "hist" else ext_pchip_pair
     neo, other = pair
@@ -2190,7 +2190,7 @@ def test_extended_pair_mismatch_is_refused_at_every_entry_point(
     `classify_many` call `check_component_pair` themselves for exactly this
     reason, so the guard cannot fire on one backend and not the other.
     """
-    from ds42.backend import (ModelNotSupported, check_component_pair,
+    from pneo.backend import (ModelNotSupported, check_component_pair,
                                   core_model_for)
 
     hist_neo, hist_other = d2pair
@@ -2235,7 +2235,7 @@ def test_two_reaches_do_not_share_a_cached_core_model(core, ext_pair):
     Without `h_extend_to` in the key the second pair would silently reuse the
     first pair's CoreModel and score every H in [30, 40) as out of support.
     """
-    from ds42.backend import _fingerprint, core_model_for
+    from pneo.backend import _fingerprint, core_model_for
 
     neo30, other30 = ext_pair
     neo40, other40 = Digest2Histogram.neo_other_pair(MODEL_PATH,

@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`ds42.ingest` — observation files -> tracklets.
+"""Unit tests for :mod:`pneo.ingest` — observation files -> tracklets.
 
 Entirely offline and fast.  Three groups carry most of the weight:
 
@@ -33,14 +33,14 @@ if REPO_ROOT not in sys.path:
 
 from astropy.time import Time  # noqa: E402
 
-from ds42 import ingest as G  # noqa: E402
-from ds42 import transforms as T  # noqa: E402
-from ds42.attributable import (  # noqa: E402
+from pneo import ingest as G  # noqa: E402
+from pneo import transforms as T  # noqa: E402
+from pneo.attributable import (  # noqa: E402
     MPC_OBSCODES,
     observatory_location,
     observer_state,
 )
-from ds42.constants import K_GAUSS  # noqa: E402
+from pneo.constants import K_GAUSS  # noqa: E402
 
 ARCSEC = 206264.80624709636
 
@@ -183,7 +183,7 @@ def test_obscode_geodetic_reproduces_the_builtin_table():
 
 
 def test_obscode_table_prefers_the_builtin_entry_over_a_file(tmp_path):
-    """A local table must not be able to move a site ds42 already knows."""
+    """A local table must not be able to move a site pneo already knows."""
     bad = tmp_path / "obs.html"
     bad.write_text(
         "<pre>\nCode Long. cos sin Name\n"
@@ -491,7 +491,7 @@ def test_blank_band_80_column_is_read_as_V_and_counted(tmp_path):
 
     digest2's ADES reader substitutes V for a missing band; its 80-column
     reader hands the raw blank to the offset table, where it misses and takes
-    the -0.8 unknown-band fallback.  ds42 applies the ADES rule on both
+    the -0.8 unknown-band fallback.  pneo applies the ADES rule on both
     paths, so it reads 0.80 mag BRIGHTER on a blank-band 80-column record.
     That is a choice, and this test pins both halves of it: the value, and the
     fact that it is announced rather than silent.

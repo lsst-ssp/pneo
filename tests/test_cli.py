@@ -1,4 +1,4 @@
-"""End-to-end tests for the ``ds42`` command-line tool (:mod:`ds42.cli`).
+"""End-to-end tests for the ``pneo`` command-line tool (:mod:`pneo.cli`).
 
 The input is a synthetic ADES PSV file built with
 ``transforms.observables_from_elements`` through the *inverse* ranging map, so
@@ -14,7 +14,7 @@ every tracklet's geometry is chosen rather than found:
 
 Most tests call ``cli.main([...])`` in process (fast, and capsys separates the
 streams the way the contract requires); one goes through
-``python -m ds42.cli`` to prove the installed entry point and the exit
+``python -m pneo.cli`` to prove the installed entry point and the exit
 codes are real.  Everything runs on the coarse ``200 x 20`` grid except the
 one test that pins the documented default-grid output, so the whole file stays
 well inside a minute.
@@ -37,11 +37,11 @@ if REPO_ROOT not in sys.path:
 import astropy.units as u  # noqa: E402
 from astropy.time import Time  # noqa: E402
 
-from ds42 import __version__, cli  # noqa: E402
-from ds42 import transforms as T  # noqa: E402
-from ds42.attributable import observer_state  # noqa: E402
-from ds42.backend import core_available  # noqa: E402
-from ds42.ingest import BAND_TO_V  # noqa: E402
+from pneo import __version__, cli  # noqa: E402
+from pneo import transforms as T  # noqa: E402
+from pneo.attributable import observer_state  # noqa: E402
+from pneo.backend import core_available  # noqa: E402
+from pneo.ingest import BAND_TO_V  # noqa: E402
 
 MODEL_PATH = os.path.join(REPO_ROOT, "data", "digest2.model.csv")
 EPOCH = "2026-03-15T06:00:00"
@@ -99,7 +99,7 @@ def _write_psv(path, specs):
     offset, so that ingestion's band -> V conversion lands back on the
     generator's V and the round trip is exact to the field's two decimals.
     """
-    lines = ["# synthetic ds42 CLI test tracklets", _PSV_HEADER]
+    lines = ["# synthetic pneo CLI test tracklets", _PSV_HEADER]
     t0 = Time(EPOCH, scale="utc")
     for trk, o, n_det, dt_min, band, stn in specs:
         reported = o["v_mag"] - BAND_TO_V[band]
@@ -166,7 +166,7 @@ def obsfile(tmp_path_factory, geometry):
 
 
 def _score(capsys, obsfile, *extra, expect=0):
-    """Run ``ds42 score`` in process; return (rows, stdout, stderr)."""
+    """Run ``pneo score`` in process; return (rows, stdout, stderr)."""
     code = cli.main(["score", obsfile, "--model", _require_model(), *extra])
     out, err = capsys.readouterr()
     assert code == expect, f"exit {code} != {expect}\nstderr:\n{err}"
@@ -223,13 +223,13 @@ def test_stdout_is_data_and_stderr_is_everything_else(capsys, obsfile):
     assert "note" not in out.lower()
     assert "TRIAGE POLICY" in err, "the policy must be explained once, on stderr"
     assert "single_detection" in err
-    assert "ds42:" in err, "the summary line"
+    assert "pneo:" in err, "the summary line"
     assert err.count("TRIAGE POLICY") == 1, "explained once per status, not per row"
 
 
 def test_quiet_suppresses_only_the_summary(capsys, obsfile):
     _out, err = _score(capsys, obsfile, "--workers", "2", "-q", *FAST)
-    assert "ds42: " not in err
+    assert "pneo: " not in err
     assert "single_detection" in err, "per-row notes still reported"
 
 
@@ -314,7 +314,7 @@ def test_output_columns_are_a_subset_of_the_json_schema():
 
 def test_every_status_the_tool_can_print_is_documented_in_help():
     """No drift between the status vocabulary and what --help explains."""
-    from ds42.ingest import IngestFailure
+    from pneo.ingest import IngestFailure
 
     documented = cli._EPILOG
     for status in cli.CLASSIFIER_STATUSES:
@@ -340,7 +340,7 @@ def test_workers_one_matches_many_on_the_python_backend(capsys, obsfile,
     same model and the same configuration, which is the thing a pool
     initializer can get wrong.
     """
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
     one, _ = _score(capsys, obsfile, "--backend", "python", "--workers", "1",
                     "-q", *FAST)
     many, _ = _score(capsys, obsfile, "--backend", "python", "--workers", "4",
@@ -348,7 +348,7 @@ def test_workers_one_matches_many_on_the_python_backend(capsys, obsfile,
     assert one == many
 
 
-@pytest.mark.skipif(not core_available(), reason="ds42._core not built")
+@pytest.mark.skipif(not core_available(), reason="pneo._core not built")
 def test_the_two_backends_agree(capsys, obsfile, monkeypatch):
     """The batched rust path and the pooled python path must agree on p_neo.
 
@@ -357,7 +357,7 @@ def test_the_two_backends_agree(capsys, obsfile, monkeypatch):
     resolving its own -- so this is the CLI's own backend-parity check on top
     of ``tests/test_backend_parity.py``.
     """
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
     rust, _ = _score(capsys, obsfile, "--backend", "rust", "--workers", "4",
                      "-q", "--format", "json", *FAST)
     py, _ = _score(capsys, obsfile, "--backend", "python", "--workers", "4",
@@ -402,7 +402,7 @@ def test_exit_2_when_no_model_can_be_found(tmp_path, monkeypatch, capsys,
     assert cli.main(["score", obsfile, "--workers", "1"]) == 2
     _out, err = capsys.readouterr()
     assert "fetch-model" in err, "the error must name the fix"
-    assert "ds42: error:" in err
+    assert "pneo: error:" in err
 
 
 def test_exit_2_when_an_explicit_model_is_missing(tmp_path, capsys, obsfile):
@@ -455,7 +455,7 @@ def test_resolve_model_refuses_to_fall_through_from_a_named_path(monkeypatch,
     (tmp_path / "data" / "digest2.model.csv").write_text("x")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(cli.MODEL_ENV_VAR, str(tmp_path / "gone.csv"))
-    with pytest.raises(cli.ConfigError, match="DS42_MODEL"):
+    with pytest.raises(cli.ConfigError, match="PNEO_MODEL"):
         cli.resolve_model(None)
 
 
@@ -505,20 +505,20 @@ def test_h_extend_to_below_the_support_end_is_a_clean_error(
     """A knob the population model rejects must not become a traceback -- or a hang.
 
     Regression test for two real bugs found by running the suite under
-    ``DS42_BACKEND=python``: the pair used to be built inside the pool's
+    ``PNEO_BACKEND=python``: the pair used to be built inside the pool's
     initializer, so at ``--workers 1`` the ValueError escaped as a traceback and
     at ``--workers N`` the command **hung forever**, because
     ``multiprocessing.Pool`` respawns a worker whose initializer raised. The
     pair is now built in the parent, before any pool exists, on every path --
     hence the (backend x workers) matrix here.
     """
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
     assert cli.main(
         ["score", obsfile, "--model", _require_model(), "--h-extend-to", "10",
          "--backend", backend, "--workers", workers]
     ) == 2
     out, err = capsys.readouterr()
-    assert "ds42: error:" in err and "Traceback" not in err
+    assert "pneo: error:" in err and "Traceback" not in err
     assert "h_extend_to" in err
     assert out == "", "nothing is written when the configuration is rejected"
 
@@ -608,17 +608,17 @@ def test_output_is_truncated_up_front_like_a_shell_redirect(capsys, obsfile,
 def test_summary_reports_the_backend_actually_used(capsys, obsfile,
                                                    monkeypatch):
     """After a ModelNotSupported fallback the summary must say 'python'."""
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
     if not core_available():
-        pytest.skip("ds42._core not built")
+        pytest.skip("pneo._core not built")
 
-    from ds42.backend import ModelNotSupported
+    from pneo.backend import ModelNotSupported
 
     def refuse(neo, other):
         raise ModelNotSupported("pretend the kernel cannot represent this")
 
     monkeypatch.setattr(cli, "core_model_for", refuse, raising=False)
-    import ds42.backend as B
+    import pneo.backend as B
 
     monkeypatch.setattr(B, "core_model_for", refuse)
     _out, err = _score(capsys, obsfile, "--backend", "rust", "--workers", "2",
@@ -636,7 +636,7 @@ def test_an_unreadable_model_file_is_a_clean_error(capsys, obsfile, tmp_path):
          "--backend", "python", *FAST]
     ) == 2
     _out, err = capsys.readouterr()
-    assert "ds42: error:" in err and "Traceback" not in err
+    assert "pneo: error:" in err and "Traceback" not in err
 
 
 def test_variant_flag_changes_the_score(capsys, obsfile):
@@ -678,7 +678,7 @@ def test_rho_bounds_can_empty_the_admissible_region(capsys, obsfile):
 def test_unknown_obscode_falls_back_to_the_geocentre_with_a_warning(
     capsys, tmp_path, geometry, monkeypatch
 ):
-    monkeypatch.delenv("DS42_OBSCODES", raising=False)
+    monkeypatch.delenv("PNEO_OBSCODES", raising=False)
     monkeypatch.chdir(tmp_path)      # no ./data/ObsCodesF.html to find
     path = _write_psv(tmp_path / "zzz.psv", [
         ("T1", geometry["neo"], 3, 15.0, "V", "ZZZ"),
@@ -785,7 +785,7 @@ def test_version(capsys):
 
 
 def test_no_command_prints_help_on_stderr(capsys):
-    """`ds42 > out.tsv` with no subcommand must leave out.tsv EMPTY."""
+    """`pneo > out.tsv` with no subcommand must leave out.tsv EMPTY."""
     assert cli.main([]) == 2
     out, err = capsys.readouterr()
     assert out == "", "help must not go to stdout; stdout is data"
@@ -797,7 +797,7 @@ def test_help_is_self_sufficient_for_a_digest2_user(capsys):
     with pytest.raises(SystemExit):
         cli.main(["score", "--help"])
     out, _err = capsys.readouterr()
-    assert "$ ds42 score" in out, "one worked example"
+    assert "$ pneo score" in out, "one worked example"
     assert "fully_truncated_flagged" in out, "the D-19 status is documented"
     assert "exit status" in out
     assert "NOT a digest2 score" in out, "the score is not a digest2 score"
@@ -821,7 +821,7 @@ def test_help_is_self_sufficient_for_a_digest2_user(capsys):
 
 
 def _bare_tracklet(i, v_mag):
-    from ds42.ingest import Tracklet
+    from pneo.ingest import Tracklet
 
     return Tracklet(
         object_id=f"T{i}", obscode="X05", n_obs=3, arc_hours=0.5,
@@ -832,7 +832,7 @@ def _bare_tracklet(i, v_mag):
     )
 
 
-@pytest.mark.skipif(not core_available(), reason="ds42._core not built")
+@pytest.mark.skipif(not core_available(), reason="pneo._core not built")
 @pytest.mark.parametrize("which", ["rust", "python"])
 def test_one_bad_tracklet_costs_one_row_not_the_batch(which, monkeypatch):
     """`classify_many` validates a whole batch before scoring any of it.
@@ -844,7 +844,7 @@ def test_one_bad_tracklet_costs_one_row_not_the_batch(which, monkeypatch):
     belongs. The python path has always been per tracklet; it is parametrized
     here so the two backends are held to the same contract by the same test.
     """
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
     tracklets = [
         _bare_tracklet(0, 21.0), _bare_tracklet(1, float("nan")),
         _bare_tracklet(2, 20.0),
@@ -868,10 +868,10 @@ def test_one_bad_tracklet_costs_one_row_not_the_batch(which, monkeypatch):
         assert any("one tracklet at a time" in n for n in notes)
 
 
-@pytest.mark.skipif(not core_available(), reason="ds42._core not built")
+@pytest.mark.skipif(not core_available(), reason="pneo._core not built")
 def test_rust_retry_scores_a_full_chunk_around_one_bad_tracklet(monkeypatch):
     """The retry must not be a special case that only works for tiny batches."""
-    monkeypatch.delenv("DS42_BACKEND", raising=False)
+    monkeypatch.delenv("PNEO_BACKEND", raising=False)
     n = 12
     tracklets = [_bare_tracklet(i, 20.0 + 0.1 * i) for i in range(n)]
     tracklets[7] = _bare_tracklet(7, float("nan"))
@@ -895,7 +895,7 @@ def test_rust_retry_scores_a_full_chunk_around_one_bad_tracklet(monkeypatch):
 def test_more_than_ten_percent_geocentric_shouts_and_names_fetch_obscodes(
     capsys, tmp_path, geometry, monkeypatch
 ):
-    monkeypatch.delenv("DS42_OBSCODES", raising=False)
+    monkeypatch.delenv("PNEO_OBSCODES", raising=False)
     monkeypatch.chdir(tmp_path)
     path = _write_psv(tmp_path / "zzz.psv", [
         ("A", geometry["neo"], 3, 15.0, "V", "ZZZ"),     # unknown -> fallback
@@ -905,7 +905,7 @@ def test_more_than_ten_percent_geocentric_shouts_and_names_fetch_obscodes(
     assert "WARNING:" in err
     assert "1 of 2 scored tracklets (50%)" in err
     assert "GEOCENTRE" in err and "ZZZ" in err
-    assert "ds42 fetch-obscodes" in err
+    assert "pneo fetch-obscodes" in err
 
 
 def test_all_stations_known_means_no_fallback_alert(capsys, obsfile):
@@ -915,7 +915,7 @@ def test_all_stations_known_means_no_fallback_alert(capsys, obsfile):
 
 def test_fetch_obscodes_subcommand(monkeypatch, tmp_path, capsys):
     """Wiring, success reporting and clean failure -- without touching the network."""
-    from ds42 import ingest as ing
+    from pneo import ingest as ing
 
     seen = {}
 
@@ -938,7 +938,7 @@ def test_fetch_obscodes_subcommand(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "fetch_obscodes", boom)
     assert cli.main(["fetch-obscodes"]) == 1
     _out, err = capsys.readouterr()
-    assert "ds42: error: no route to host" in err
+    assert "pneo: error: no route to host" in err
     assert "Traceback" not in err
 
 
@@ -946,7 +946,7 @@ def test_fetch_obscodes_writes_nothing_when_the_payload_is_not_the_table(
     monkeypatch, tmp_path
 ):
     """A captive portal must not be able to replace a good local table."""
-    from ds42 import ingest as ing
+    from pneo import ingest as ing
 
     class _Resp:
         def read(self):
@@ -970,8 +970,8 @@ def test_fetch_obscodes_writes_nothing_when_the_payload_is_not_the_table(
 
 
 def test_fetch_model_subcommand_wraps_the_existing_script(monkeypatch):
-    """`ds42 fetch-model` must be the same code as `ds42-fetch-model`."""
-    from ds42 import fetch_model
+    """`pneo fetch-model` must be the same code as `pneo-fetch-model`."""
+    from pneo import fetch_model
 
     seen = {}
 
@@ -987,10 +987,10 @@ def test_fetch_model_subcommand_wraps_the_existing_script(monkeypatch):
 
 
 def test_module_entry_point_in_a_subprocess(obsfile, tmp_path):
-    """`python -m ds42.cli` -- the real process, the real exit code."""
+    """`python -m pneo.cli` -- the real process, the real exit code."""
     _require_model()
     proc = subprocess.run(
-        [sys.executable, "-m", "ds42.cli", "score", obsfile,
+        [sys.executable, "-m", "pneo.cli", "score", obsfile,
          "--model", MODEL_PATH, "--workers", "2", "-q", *FAST],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
     )
@@ -1004,9 +1004,9 @@ def test_module_entry_point_in_a_subprocess(obsfile, tmp_path):
 
 
 def test_console_script_is_declared_in_pyproject():
-    """The `ds42` entry point must be wired, or none of this is reachable."""
+    """The `pneo` entry point must be wired, or none of this is reachable."""
     text = open(os.path.join(REPO_ROOT, "pyproject.toml")).read()
-    assert 'ds42 = "ds42.cli:main"' in text
-    assert 'ds42-fetch-model = "ds42.fetch_model:main"' in text, (
+    assert 'pneo = "pneo.cli:main"' in text
+    assert 'pneo-fetch-model = "pneo.fetch_model:main"' in text, (
         "the pre-existing script must keep working"
     )

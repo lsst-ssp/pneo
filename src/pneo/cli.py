@@ -1,8 +1,8 @@
-"""The ``ds42`` command-line tool.
+"""The ``pneo`` command-line tool.
 
-``ds42 score OBSFILE...`` is the counterpart of running ``digest2`` on an
+``pneo score OBSFILE...`` is the counterpart of running ``digest2`` on an
 observation file: it ingests ADES PSV or MPC 80-column astrometry
-(:mod:`ds42.ingest`), classifies one tracklet per object, and writes one
+(:mod:`pneo.ingest`), classifies one tracklet per object, and writes one
 row per tracklet to stdout.
 
 Everything about the pipeline is spelled out in ``--help``; the design
@@ -29,7 +29,7 @@ caught before any scoring is done.
 
 **stdout carries data, stderr carries everything else.**  Warnings, per-row
 failure notes and the final summary all go to stderr, so
-``ds42 score obs.psv > scores.tsv`` yields a clean parseable file.
+``pneo score obs.psv > scores.tsv`` yields a clean parseable file.
 
 ``--workers`` defaults to ``os.cpu_count()`` and means different machinery on
 each backend; see :func:`_score_tracklets` and the ``--help`` text.
@@ -65,7 +65,7 @@ from .population import D2_VARIANTS, H_INTERPOLATIONS
 __all__ = ["main", "resolve_model", "OUTPUT_COLUMNS", "MODEL_ENV_VAR"]
 
 #: Environment variable naming the digest2 population model file.
-MODEL_ENV_VAR = "DS42_MODEL"
+MODEL_ENV_VAR = "PNEO_MODEL"
 
 #: Where ``resolve_model`` looks last.
 DEFAULT_MODEL_PATH = os.path.join("data", "digest2.model.csv")
@@ -119,7 +119,7 @@ _STATUS_NOTES = {
     "nan": "a population component returned NaN; this is a bug, please report it.",
 }
 
-#: Statuses a :class:`~ds42.classifier.ClassificationResult` can carry, i.e.
+#: Statuses a :class:`~pneo.classifier.ClassificationResult` can carry, i.e.
 #: the rows for which the classifier ran to completion.  Everything else in the
 #: status column is an ingestion failure or ``"error"``.
 CLASSIFIER_STATUSES = frozenset(
@@ -128,7 +128,7 @@ CLASSIFIER_STATUSES = frozenset(
 )
 
 #: Above this fraction of scored tracklets resolved geocentrically, the run gets
-#: a prominent stderr warning naming ``ds42 fetch-obscodes``.  A geocentric
+#: a prominent stderr warning naming ``pneo fetch-obscodes``.  A geocentric
 #: stand-in for a real site moves the observer by up to one Earth radius, which
 #: on a survey station is worth up to 0.17 in p_neo: measured by scoring the WP8
 #: pilot's 499 real tracklets twice, once with the MPC table and once without.
@@ -164,7 +164,7 @@ class ConfigError(Exception):
 def resolve_model(flag: str | None = None) -> str:
     """Locate the digest2 population model: flag, then env, then ``./data``.
 
-    Resolution order is ``--model PATH``, then ``$DS42_MODEL``, then
+    Resolution order is ``--model PATH``, then ``$PNEO_MODEL``, then
     ``./data/digest2.model.csv``.  A path that was named explicitly (by flag or
     environment) and does not exist is an error naming *that* path — silently
     falling through to a different model would make the run unreproducible.
@@ -172,7 +172,7 @@ def resolve_model(flag: str | None = None) -> str:
     Raises
     ------
     ConfigError
-        With a message naming ``ds42 fetch-model`` when nothing was found.
+        With a message naming ``pneo fetch-model`` when nothing was found.
     """
     env = os.environ.get(MODEL_ENV_VAR, "").strip()
     for path, how in ((flag, "--model"), (env or None, f"${MODEL_ENV_VAR}")):
@@ -188,7 +188,7 @@ def resolve_model(flag: str | None = None) -> str:
     raise ConfigError(
         "no digest2 population model found. Looked at: --model (not given), "
         f"${MODEL_ENV_VAR} (not set), {DEFAULT_MODEL_PATH} (does not exist).\n"
-        "  Run `ds42 fetch-model` to download it (~4 MB) into ./data/, "
+        "  Run `pneo fetch-model` to download it (~4 MB) into ./data/, "
         "or pass --model PATH."
     )
 
@@ -299,7 +299,7 @@ def _foreign_warnings(caught) -> list[str]:
     return [
         f"{w.category.__name__}: {w.message}"
         for w in caught
-        if not str(w.message).startswith("ds42.classify:")
+        if not str(w.message).startswith("pneo.classify:")
     ]
 
 
@@ -357,7 +357,7 @@ def _score_tracklets(
     #   * the rust path needs the pair anyway, and the workers <= 1 python path
     #     can reuse it instead of parsing the 45,936-bin file a second time.
     #
-    # Note this happens BEFORE the empty-input shortcut below: `ds42 score
+    # Note this happens BEFORE the empty-input shortcut below: `pneo score
     # --h-extend-to 10` on a file with no usable tracklets is a configuration
     # error (exit 2) whether or not there was anything to score.  Reporting
     # "nothing scored" (exit 1) for a run whose configuration was never valid
@@ -543,7 +543,7 @@ def _rust_call(neo, other, atts, R, V, cfg, workers):
 
 
 def _row_from_result(idx: int, res) -> tuple:
-    """A scored-row tuple from a :class:`~ds42.classifier.ClassificationResult`."""
+    """A scored-row tuple from a :class:`~pneo.classifier.ClassificationResult`."""
     return (
         int(idx), float(res.p_neo), float(res.log_lr), float(res.lambda_neo),
         float(res.lambda_other), int(res.n_nodes), str(res.status), "", [],
@@ -763,9 +763,9 @@ def _positive_int(value: str) -> int:
 
 _EPILOG = """\
 example
-  $ ds42 fetch-model                    # once: the MPC population model
-  $ ds42 fetch-obscodes                 # once: the MPC observatory codes
-  $ ds42 score neocp.psv
+  $ pneo fetch-model                    # once: the MPC population model
+  $ pneo fetch-obscodes                 # once: the MPC observatory codes
+  $ pneo score neocp.psv
   object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
   T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
   T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      fully_truncated_flagged
@@ -790,14 +790,14 @@ the columns
              DIVERGENCE [D-20]: an MPC 80-column record with a magnitude but a
              BLANK band is converted as V (offset 0.0), where digest2's own
              80-column reader applies its -0.8 unknown-band fallback -- so
-             ds42 is 0.80 mag brighter there. A blank band in pre-ADES
+             pneo is 0.80 mag brighter there. A blank band in pre-ADES
              astrometry is an unfiltered/visual magnitude, and -0.8 is
              digest2's crudest fallback, applied only because a different
-             parser ran; ds42's ADES and 80-column paths agree with each
+             parser ran; pneo's ADES and 80-column paths agree with each
              other instead. Every such record is counted and reported on
              stderr. Named bands agree with digest2 exactly, on both formats.
-             (ds42 also accepts more observation types than digest2, which
-             keeps only note-2 C/S/B; ds42 rejects only the record types
+             (pneo also accepts more observation types than digest2, which
+             keeps only note-2 C/S/B; pneo rejects only the record types
              whose columns are not optical RA/Dec at all -- satellite, roving
              observer, radar.)
   p_neo      P(NEO | tracklet): a calibrated posterior, thresholdable against a
@@ -851,7 +851,7 @@ exit status
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ds42",
+        prog="pneo",
         # Pre-wrapped: RawDescriptionHelpFormatter (which the epilog needs)
         # does not reflow the description, so it is written to fit 79 columns.
         description=(
@@ -862,7 +862,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--version", action="version", version=f"ds42 {__version__}"
+        "--version", action="version", version=f"pneo {__version__}"
     )
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
@@ -917,7 +917,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument(
         "--model", metavar="PATH", default=None,
         help=f"digest2 population model CSV. Default: ${MODEL_ENV_VAR} if set, "
-             f"else {DEFAULT_MODEL_PATH}. Get it with `ds42 fetch-model`.",
+             f"else {DEFAULT_MODEL_PATH}. Get it with `pneo fetch-model`.",
     )
     g.add_argument(
         "--variant", choices=D2_VARIANTS, default="All",
@@ -999,7 +999,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="local copy of the MPC 'List Of Observatory Codes' page, for "
              f"stations outside the built-in 14-code table. Default: "
              f"${OBSCODE_ENV_VAR} if set, else ./data/ObsCodesF.html. Get one "
-             "with `ds42 fetch-obscodes`. NEVER fetched during a scoring "
+             "with `pneo fetch-obscodes`. NEVER fetched during a scoring "
              "run; an unknown code falls back to the GEOCENTRE with a warning, "
              "which is worth up to 0.17 in p_neo at a survey station, so "
              "check the run summary.",
@@ -1009,7 +1009,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument(
         "--backend", choices=("auto", "python", "rust"), default="auto",
         help="auto (default) uses the compiled kernel when it is importable "
-             "and the numpy reference otherwise; DS42_BACKEND overrides "
+             "and the numpy reference otherwise; PNEO_BACKEND overrides "
              "this flag.",
     )
     g.add_argument(
@@ -1029,10 +1029,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "fetch-model",
         help="download the MPC digest2 population model into ./data/",
         description=(
-            "Thin wrapper around `ds42-fetch-model`: downloads "
+            "Thin wrapper around `pneo-fetch-model`: downloads "
             "digest2.model.csv (~4 MB) from the MPC's public repository, "
             "verifies its header and checksum, and writes it where "
-            "`ds42 score` looks for it."
+            "`pneo score` looks for it."
         ),
     )
     fetch.add_argument(
@@ -1045,7 +1045,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="download the MPC observatory-code table into ./data/",
         description=(
             "Download the MPC 'List Of Observatory Codes' page, which\n"
-            "`ds42 score` reads to place any station outside the built-in\n"
+            "`pneo score` reads to place any station outside the built-in\n"
             "14-code table.\n"
             "\n"
             "There is no checksum pin: the page is live, gains sites and\n"
@@ -1063,7 +1063,7 @@ def _build_parser() -> argparse.ArgumentParser:
     obs.add_argument(
         "--out", metavar="PATH", default=None,
         help=f"destination path (default: {DEFAULT_OBSCODES_DEST}, which is "
-             "where `ds42 score` looks first).",
+             "where `pneo score` looks first).",
     )
     return parser
 
@@ -1258,7 +1258,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
             f"{shown}. That displaces the observer by up to one Earth radius "
             "and is worth up to 0.17 in p_neo at a survey station -- enough to "
             "change a triage decision. Fix it with:\n"
-            "    ds42 fetch-obscodes        # writes ./data/ObsCodesF.html\n"
+            "    pneo fetch-obscodes        # writes ./data/ObsCodesF.html\n"
             "  then re-run (or pass --obscodes PATH)."
         )
 
@@ -1276,7 +1276,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
     if not args.quiet:
         obsc = table.loaded_from
         note(
-            "ds42: {ok} ok, {policy} policy-assigned, {undef} undefined, "
+            "pneo: {ok} ok, {policy} policy-assigned, {undef} undefined, "
             "{failed} not classified, of {n} object(s) | model={model} "
             "variant={variant} h_extend_to={hx} h_interpolation={hi} "
             "grid={nr}x{nd} backend={be} workers={w} obscodes={obsc}".format(
@@ -1306,12 +1306,12 @@ def _resolved_backend(flag: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """``ds42`` console entry point.  Returns the process exit code."""
+    """``pneo`` console entry point.  Returns the process exit code."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 
     if args.command is None:
-        # stderr, not stdout: `ds42 > out.tsv` with a forgotten subcommand
+        # stderr, not stdout: `pneo > out.tsv` with a forgotten subcommand
         # must leave out.tsv empty, not full of help text that a downstream
         # parser will then choke on.  Exit 2 for the same reason argparse uses
         # it -- the command line was wrong.
@@ -1329,7 +1329,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             path, n_codes = fetch_obscodes(dest)
         except (RuntimeError, OSError) as exc:  # a clean CLI error, no traceback
-            print(f"ds42: error: {exc}", file=sys.stderr)
+            print(f"pneo: error: {exc}", file=sys.stderr)
             return 1
         print(
             f"wrote {path} ({n_codes} observatory codes with parallax "
@@ -1341,9 +1341,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _cmd_score(args)
     except ConfigError as exc:
-        print(f"ds42: error: {exc}", file=sys.stderr)
+        print(f"pneo: error: {exc}", file=sys.stderr)
         return 2
-    except BrokenPipeError:  # `ds42 score ... | head`
+    except BrokenPipeError:  # `pneo score ... | head`
         # Python would otherwise print "Exception ignored" at shutdown when it
         # flushes a closed stdout.  Redirect the fd and exit quietly, which is
         # what a well-behaved filter does.
@@ -1353,7 +1353,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
         return 0
     except KeyboardInterrupt:  # pragma: no cover
-        print("ds42: interrupted", file=sys.stderr)
+        print("pneo: interrupted", file=sys.stderr)
         return 130
 
 

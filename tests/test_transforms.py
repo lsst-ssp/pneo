@@ -40,8 +40,8 @@ import math
 import numpy as np
 import pytest
 
-from ds42 import transforms as T
-from ds42.constants import G_SLOPE_DEFAULT, MU_SUN, OBLIQUITY_J2000
+from pneo import transforms as T
+from pneo.constants import G_SLOPE_DEFAULT, MU_SUN, OBLIQUITY_J2000
 
 SEED = 20260831
 
@@ -215,7 +215,7 @@ def test_rotation_matches_astropy():
 
     astropy's BarycentricMeanEcliptic uses the IAU 2006 obliquity
     (84381.406 arcsec) and additionally applies the ICRS frame bias, while
-    ds42 uses the IAU 1976 value (84381.448 arcsec) pinned in constants.py.
+    pneo uses the IAU 1976 value (84381.448 arcsec) pinned in constants.py.
     The two differ by 0.042 arcsec = 2.0e-7 rad, so for a vector of length
     |v| ~ 3.7 AU the expected disagreement is ~7.6e-7 AU.  The tolerance below
     is set just above that; it is a convention check, not a precision check.
@@ -496,7 +496,7 @@ def test_elements_against_published_worked_example():
     i = 153.2 deg, Omega = 255.3 deg, omega = 20.07 deg, nu = 28.45 deg.
 
     The two-body problem is scale invariant, so the case is transplanted into
-    ds42 units by keeping km as the length unit and rescaling TIME by
+    pneo units by keeping km as the length unit and rescaling TIME by
     Ts = sqrt(MU_SUN / mu_earth) so that the gravitational parameter becomes
     MU_SUN.  This is a genuinely external check: it fixes the sign conventions
     of Omega and omega (note i > 90 deg — a RETROGRADE orbit, the case where a

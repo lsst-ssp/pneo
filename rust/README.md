@@ -1,27 +1,27 @@
-# ds42 Rust core kernel (`ds42._core`)
+# pneo Rust core kernel (`pneo._core`)
 
 The fused classify kernel behind `backend="rust"`. It implements the WP5
 marginal-likelihood integral (DESIGN §2.3–2.5) as a single pass over the
 quadrature nodes, crossing the Python↔Rust boundary **once per tracklet or
 once per batch** — never per function. The numpy pipeline in
-`ds42.classifier` stays the reference implementation; the two are
+`pneo.classifier` stays the reference implementation; the two are
 cross-validated in `tests/test_backend_parity.py` and
 `validation/backend_parity.py`.
 
 ## Build
 
 ```sh
-rust/build.sh            # release build, installs src/ds42/_core.abi3.so
+rust/build.sh            # release build, installs src/pneo/_core.abi3.so
 rust/build.sh --debug    # debug build (much slower kernel)
 cargo test --release --manifest-path rust/Cargo.toml     # rust unit tests
 ```
 
 **Layout choice.** The crate is a plain cargo/pyo3 `cdylib` and `build.sh`
-copies `target/release/libds42_core.so` to
-`src/ds42/_core.abi3.so`. The repository's Python package is installed
+copies `target/release/libpneo_core.so` to
+`src/pneo/_core.abi3.so`. The repository's Python package is installed
 editable from `src/`, so that path *is* the import location and a rebuild is
 picked up with no reinstall — this is the `maturin develop` equivalent for this
-repo. A real `maturin develop` would have to own the whole `ds42` package
+repo. A real `maturin develop` would have to own the whole `pneo` package
 and would fight the existing editable install, which is why the build is a
 `cargo build` plus a copy instead. The install is an atomic rename rather than
 an overwrite, so rebuilding while a long run has the old library mapped cannot
@@ -30,9 +30,9 @@ one `.so` works for CPython ≥ 3.11 and no rebuild is needed across interpreter
 minor versions.
 
 maturin is deliberately not in the loop. Driven from this crate alone it names
-the wheel's module `ds42_core` rather than `ds42._core` (it warns about
-exactly that), and making it emit `ds42/_core` would have the wheel claim
-the whole `ds42` package and collide with the editable install. Producing a
+the wheel's module `pneo_core` rather than `pneo._core` (it warns about
+exactly that), and making it emit `pneo/_core` would have the wheel claim
+the whole `pneo` package and collide with the editable install. Producing a
 single `pip`-installable wheel that carries both the Python package and the
 extension is a packaging change at the repo root (`pyproject.toml` moving to
 the maturin build backend with `python-source = "src"`), which this work
@@ -45,7 +45,7 @@ Dependencies are exactly the three the design allows: `pyo3`, `numpy`
 
 | file | contents |
 | --- | --- |
-| `src/consts.rs` | copies of `ds42.constants` / `transforms` constants (`K_GAUSS`, obliquity, H,G coefficients, `_COND_MAX`) |
+| `src/consts.rs` | copies of `pneo.constants` / `transforms` constants (`K_GAUSS`, obliquity, H,G coefficients, `_COND_MAX`) |
 | `src/model.rs` | `Histogram`: the flattened `(q, e, i, H)` density table and the bin lookup, bit-identical to `population._bin_index` / `Digest2Histogram.density` including the D-14 clamp |
 | `src/kernel.rs` | the fused node loop: geometry → elements → photometry → density → Jacobian → accumulation; ρ̇ node generation; grid validation |
 | `src/guard.rs` | exact port of WP2's conditioning guard, plus the reachable-manifold prefilter that decides when to run it |
@@ -155,7 +155,7 @@ treated as hostile:
 * every large allocation uses `try_reserve`, so exhaustion raises
   `MemoryError` rather than aborting.
 * model-adaptation failures raise `UnsupportedModel` (a `ValueError` subclass),
-  which `ds42.backend` maps onto `ModelNotSupported` so that
+  which `pneo.backend` maps onto `ModelNotSupported` so that
   `backend="auto"` falls back to the reference instead of failing where the
   reference succeeds. An explicit `backend="rust"` still raises.
 
@@ -180,7 +180,7 @@ treated as hostile:
   depend on the machine, the numpy build and the libm — not just the numpy
   version. Measured on one host: equally legitimate formulations of the same
   quantity (`exp(y ln 10)`, `exp2(y log2 10)`) differ from `np.power(10, y)` by
-  up to **7 ulp on 881 of 1200 nodes**. So `ds42.backend.rho_axis` computes
+  up to **7 ulp on 881 of 1200 nodes**. So `pneo.backend.rho_axis` computes
   the 1200-element axis with the same `np.geomspace` call `build_grid` makes and
   hands the two small arrays (18.8 kB) over; ρ-grid parity is then exact **by
   construction** on every platform. Cost: 0.24 µs/call cached (106 µs
@@ -205,17 +205,17 @@ treated as hostile:
 ## Python surface
 
 ```python
-from ds42.classifier import classify, classify_many
+from pneo.classifier import classify, classify_many
 
 res = classify(att, neo, other, R, V, backend="rust")            # or "auto"/"python"
 res = classify(att, neo, other, R, V, backend="rust", diagnostics=False)
 out = classify_many(atts, neo, other, backend="rust", n_threads=32)
 ```
 
-`DS42_BACKEND=python|rust` overrides the argument process-wide (a
+`PNEO_BACKEND=python|rust` overrides the argument process-wide (a
 preference, not an assertion: where the kernel cannot be used, the reference
-still runs). `DS42_BACKEND=auto` means "no preference" and overrides
-nothing. See `ds42/backend.py` for the model-adaptation rules and the
+still runs). `PNEO_BACKEND=auto` means "no preference" and overrides
+nothing. See `pneo/backend.py` for the model-adaptation rules and the
 limitations.
 
 `diagnostics=False` returns only the scalars and the mask counters, with no
@@ -298,14 +298,14 @@ Reproduce with `python3 rust/bench.py` and `python3 validation/backend_parity.py
 `n_nodes - n_masked_nonfinite` nodes with finite elements and finite implied H,
 how many lie at or above the pair's H support end (`+inf` for a D-14 clamped
 pair, `h_extend_to` under D-19, else 25.5). It exists so that
-`ds42.classifier._posterior` can tell *why* a 0/0 outcome happened without
+`pneo.classifier._posterior` can tell *why* a 0/0 outcome happened without
 the per-node arrays, i.e. in `diagnostics=False` mode. Zero density over a
 non-empty region has several causes and only the faint-end one licenses the
 D-19 triage score; see `_fully_truncated_in_H`.
 
-`ds42.backend` turns the dict into a `ClassificationResult`, which since
+`pneo.backend` turns the dict into a `ClassificationResult`, which since
 D-19 also carries `status` (`"ok"`, `"fully_truncated_flagged"`,
 `"empty_region"`, `"both_zero"`, `"overflow"`, `"nan"`) and the derived
 `policy_assigned` flag. Both are produced by the shared post-processing in
-`ds42.classifier`, so they are identical between the backends by
+`pneo.classifier`, so they are identical between the backends by
 construction, and `validation/backend_parity.py` compares them.

@@ -1,6 +1,6 @@
 """Physical constants and unit conventions. Single source of truth (IMPLEMENTATION §1).
 
-Conventions used throughout ds42:
+Conventions used throughout pneo:
   - Length: AU. Time: day (TDB). Angles: radian.
   - State vectors are heliocentric. Frame is stated per function: "equ" = equatorial
     ICRS/J2000; "ecl" = ecliptic J2000 (mean obliquity below).
