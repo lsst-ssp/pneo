@@ -1,21 +1,30 @@
-"""pneo — Bayesian NEO tracklet classification by systematic ranging."""
+"""pneo: the probability that a newly detected moving object is a near-Earth object.
 
-from ._attributable import Attributable, observer_state
-from ._classifier import ClassificationResult, classify, classify_many
-from .models.digest2 import Digest2Component, PopulationComponent
-from ._ranging import RangingGrid, admissible_rhodot_interval, build_grid
+The public API:
+
+* :func:`load_model` -- the population model P(NEO) is computed from;
+* :func:`classify` -- P(NEO) for one or many tracklets (numpy in, numpy out);
+* :func:`read_observations` -- ADES PSV or MPC 80-column astrometry to tracklets;
+* :func:`posterior_map`, :func:`plot_posterior_map` -- where the probability
+  lies in distance and range-rate, for one tracklet;
+* :func:`fetch` -- download the model and the observatory codes.
+
+Units are degrees and degrees per day; ``ra_rate`` is the on-sky rate,
+d(alpha)/dt * cos(delta).
+"""
+
+from ._api import classify, fetch, plot_posterior_map, posterior_map, read_observations
+from .models import PopulationComponent, PopulationModel, load_model
 
 __all__ = [
-    "Attributable",
-    "observer_state",
-    "ClassificationResult",
+    "load_model",
     "classify",
-    "classify_many",
-    "Digest2Component",
+    "read_observations",
+    "posterior_map",
+    "plot_posterior_map",
+    "fetch",
+    "PopulationModel",
     "PopulationComponent",
-    "RangingGrid",
-    "admissible_rhodot_interval",
-    "build_grid",
 ]
 
 try:  # single source of truth: installed metadata (setuptools-scm derived)

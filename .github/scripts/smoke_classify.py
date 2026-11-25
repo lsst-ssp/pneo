@@ -48,7 +48,8 @@ import numpy as np  # noqa: E402
 from astropy.time import Time  # noqa: E402
 
 import pneo  # noqa: E402
-from pneo import Attributable, classify  # noqa: E402
+from pneo._attributable import Attributable  # noqa: E402
+from pneo._classifier import classify  # noqa: E402
 from pneo._backend import core_available, resolve_backend  # noqa: E402
 from pneo.models.digest2 import Digest2Component  # noqa: E402
 

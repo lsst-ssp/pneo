@@ -39,13 +39,13 @@ automatically), fits one tracklet per object, and writes one row per tracklet:
 $ pneo score neocp.psv
 object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
 T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
-T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      fully_truncated_flagged
+T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
 T000003    5      1.3333  2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
 T000004    1                                        X05                                single_detection
 ```
 
 `p_neo` is the probability that the object is an NEO. `status` says how each row was
-obtained: `ok` is a computed probability; `fully_truncated_flagged` marks a very faint,
+obtained: `ok` is a computed probability; `beyond_model` marks a very faint,
 nearby object beyond the population model's size range, assigned P(NEO) = 1 by rule; any
 other value names why the object could not be scored. Use only `status == ok` rows when
 checking calibration. Output is tab-separated by default (`--format csv` or `json` for

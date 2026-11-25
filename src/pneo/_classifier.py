@@ -164,7 +164,7 @@ class ClassificationResult:
             A likelihood-based posterior.  This includes the one-sided cases
             (``p_neo`` exactly 1.0 or 0.0, ``log_lr`` +/-inf), which *are*
             posteriors: one component genuinely has zero support there.
-        ``"fully_truncated_flagged"``
+        ``"beyond_model"``
             ``p_neo = 1.0`` assigned by the **D-19 triage policy**, not
             computed: the admissible region is non-empty, both Lambdas are
             exactly zero, **and the cause is the H support running out** — at
@@ -175,7 +175,7 @@ class ClassificationResult:
             NEOCP astrometry), :func:`_fully_truncated_in_H` for why the
             trigger is gated on that mechanism rather than on the zero itself,
             and :attr:`policy_assigned` for the boolean.
-        ``"both_zero"``
+        ``"no_support"``
             ``p_neo = nan``: both Lambdas exactly zero over a non-empty region
             whose mechanism is **not** the faint-end wall — the region lies
             inside the H support in cells the model holds no objects in, or
@@ -213,7 +213,7 @@ class ClassificationResult:
     diagnostics: bool = True
     #: How ``p_neo`` was arrived at; see the class docstring for the vocabulary.
     #: The one value that must never be conflated with the others is
-    #: ``"fully_truncated_flagged"`` — a D-19 policy assignment rather than a
+    #: ``"beyond_model"`` — a D-19 policy assignment rather than a
     #: posterior.
     status: str = "ok"
 
@@ -221,14 +221,14 @@ class ClassificationResult:
     def policy_assigned(self) -> bool:
         """True iff ``p_neo`` is a D-19 triage-policy assignment, not a posterior.
 
-        Equivalent to ``status == "fully_truncated_flagged"``.  Exposed as a
+        Equivalent to ``status == "beyond_model"``.  Exposed as a
         named boolean because this is the question every analysis has to ask
         before pooling scores: a policy-assigned 1.0 carries no calibration
         information (both likelihoods were exactly zero), so it belongs in its
         own accounting line rather than in a reliability bin.  See
         :func:`_posterior` for the full statement of the policy.
         """
-        return self.status == "fully_truncated_flagged"
+        return self.status == "beyond_model"
 
     def _require_diagnostics(self, what: str) -> None:
         if not self.diagnostics:
@@ -609,7 +609,7 @@ def _fully_truncated_in_H(
     region sits relative to the support, because the region has no evaluable
     point in it: every node was masked as unbound or non-finite (D-8, WP2's
     guard). That is a geometry/photometry failure, not a faint-end failure, and
-    it gets the honest ``nan`` with status ``"both_zero"``.
+    it gets the honest ``nan`` with status ``"no_support"``.
 
     Cheap by construction: all three arguments are scalars both backends
     already accumulate while walking the grid, so the test costs nothing and
@@ -669,7 +669,7 @@ def _posterior(
 
     ``"ok"``          a usable posterior (includes the one-sided cases, where
                       p_neo is exactly 1.0 or 0.0 and log_lr is +/-inf);
-    ``"fully_truncated_flagged"``
+    ``"beyond_model"``
                       ``n_nodes > 0``, both Lambdas exactly zero, **and** the
                       cause is the H support running out: at least one node has
                       a finite implied H and at least
@@ -679,7 +679,7 @@ def _posterior(
                       triage policy this returns ``p_neo = 1.0``,
                       ``log_lr = nan``.  **That 1.0 is a policy assignment, not
                       a posterior** — see below;
-    ``"both_zero"``   both Lambdas are exactly zero and the D-19 mechanism test
+    ``"no_support"``   both Lambdas are exactly zero and the D-19 mechanism test
                       does **not** hold — either the region is empty
                       (``n_nodes == 0``; both callers intercept that earlier
                       and report ``"empty_region"`` instead), or no node has a
@@ -697,7 +697,7 @@ def _posterior(
 
     The D-19 triage policy, stated precisely
     ----------------------------------------
-    A tracklet in the ``"fully_truncated_flagged"`` state carries **no
+    A tracklet in the ``"beyond_model"`` state carries **no
     likelihood information at all**:
     both components integrate to exactly zero, so the ratio that defines
     P(NEO) (DESIGN §2.4) does not exist and no amount of arithmetic can
@@ -729,7 +729,7 @@ def _posterior(
     ``"empty_region"``), a region with no evaluable node
     (``n_h_finite == 0``), and a region that sits inside — or below — the H
     support where the model simply holds nothing
-    (status ``"both_zero"``).  In none of those has anything been observed
+    (status ``"no_support"``).  In none of those has anything been observed
     about faintness or speed, so the empirical NEOCP argument does not apply.
     """
     if np.isnan(lam_neo) or np.isnan(lam_other):
@@ -754,8 +754,8 @@ def _posterior(
         if int(n_nodes) > 0 and _fully_truncated_in_H(
             n_h_finite, w_h_finite, w_h_at_or_above_support
         ):
-            return 1.0, float("nan"), "fully_truncated_flagged"
-        return float("nan"), float("nan"), "both_zero"
+            return 1.0, float("nan"), "beyond_model"
+        return float("nan"), float("nan"), "no_support"
     if lam_other <= 0.0:
         return 1.0, float("inf"), "ok"
     if lam_neo <= 0.0:
@@ -770,7 +770,7 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
     Factored out of `classify` so that the Rust backend raises *exactly* the
     same warnings (same text, same category) as the reference path.
     """
-    if status == "fully_truncated_flagged":
+    if status == "beyond_model":
         warnings.warn(
             "pneo.classify: both marginal likelihoods are zero "
             f"(Lambda_NEO = {lam_neo:g}, Lambda_other = {lam_other:g}) over a "
@@ -784,14 +784,14 @@ def _warn_status(status: str, lam_neo: float, lam_other: float,
             "policy is empirical (D-19): on real NEOCP discovery astrometry "
             "11 of 11 fully truncated tracklets were true NEOs, because fast + "
             "faint implies close implies small. This result is flagged: "
-            "ClassificationResult.status == 'fully_truncated_flagged' "
+            "ClassificationResult.status == 'beyond_model' "
             "(ClassificationResult.policy_assigned is True). Analyses that "
             "measure calibration MUST separate these from likelihood-based "
             "scores.",
             RuntimeWarning,
             stacklevel=stacklevel,
         )
-    elif status == "both_zero":
+    elif status == "no_support":
         # Reachable, and its text must NOT claim support truncation: this is
         # the branch for every 0/0 whose mechanism is something else (a hole in
         # the model inside the support, implied H below zero, or no evaluable
@@ -865,7 +865,7 @@ def classify(
       "empty_region"``) -> ``p_neo = nan``.  The geometry admits no bound
       orbit; genuinely uninformative.
     * **fully truncated** (``n_nodes > 0`` but both Lambdas exactly zero,
-      ``status == "fully_truncated_flagged"``) -> ``p_neo = 1.0``,
+      ``status == "beyond_model"``) -> ``p_neo = 1.0``,
       ``log_lr = nan``, by the **D-19 triage policy**.  The region is a real
       set of orbits, all of them outside both models' H support (DESIGN §2.6),
       so no posterior exists; the 1.0 is a policy assignment backed by the
@@ -1229,7 +1229,7 @@ def classify_many(
       ``p_neo = nan``.  **``np.isnan(res.p_neo)`` still finds exactly the
       unscorable tracklets**, and after D-19 this is essentially the only way
       to get one.
-    * ``res.status == "fully_truncated_flagged"`` (equivalently
+    * ``res.status == "beyond_model"`` (equivalently
       ``res.policy_assigned``) -> ``p_neo = 1.0``, ``log_lr = nan``.  This used
       to be a ``nan`` score too; under the D-19 triage policy it is a
       **defined** score, so a filter written as ``np.isnan(p)`` will no longer

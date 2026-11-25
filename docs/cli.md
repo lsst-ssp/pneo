@@ -69,7 +69,7 @@ location came from. `-o PATH` writes to a file instead of stdout.
 **Status values.**
 
 - `ok`: a probability computed from the population model.
-- `fully_truncated_flagged`: every distance consistent with the tracklet implies an
+- `beyond_model`: every distance consistent with the tracklet implies an
   object fainter (smaller) than the population model covers, which happens only for very
   close, very small objects. `pneo` assigns `p_neo = 1` by rule and leaves `log_lr` empty.
   In simulations this rule fired only for NEOs.

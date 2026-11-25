@@ -7,7 +7,7 @@ every tracklet's geometry is chosen rather than found:
 * ``T000001`` a close NEO (rho = 0.1 AU, q = 1.09) -- an ordinary ``ok`` row;
 * ``T000002`` rho = 0.01 AU, 30 deg/day, H = 32: its **entire** admissible
   region lies fainter than the model's H support even with ``h_extend_to=30``,
-  so it exercises the **D-19 triage policy** (``fully_truncated_flagged``);
+  so it exercises the **D-19 triage policy** (``beyond_model``);
 * ``T000003`` a slow, distant tracklet at a second station (F51), which also
   exercises the per-station observer state and the ``r`` -> V band correction;
 * ``T000004`` one single detection -- an **ingestion failure** row.
@@ -201,7 +201,7 @@ def test_score_tsv_end_to_end(capsys, obsfile):
     assert float(neo["arc_h"]) == pytest.approx(0.75, abs=1e-3)
 
     # The D-19 triage policy, visible in the status column.
-    assert wall["status"] == "fully_truncated_flagged"
+    assert wall["status"] == "beyond_model"
     assert float(wall["p_neo"]) == 1.0
     assert wall["log_lr"] == "nan", "no likelihood ratio exists for a policy row"
 
@@ -253,7 +253,7 @@ def test_csv_format(capsys, obsfile):
     rows = list(_csv.reader(out.strip("\n").split("\n")))
     assert rows[0] == list(cli.OUTPUT_COLUMNS)
     assert len(rows) == 5
-    assert rows[2][-1] == "fully_truncated_flagged"
+    assert rows[2][-1] == "beyond_model"
 
 
 def test_json_format_is_strict_and_single_schema(capsys, obsfile):
@@ -270,7 +270,7 @@ def test_json_format_is_strict_and_single_schema(capsys, obsfile):
         assert tuple(row) == cli._ROW_FIELDS, "one schema for every line"
 
     neo, wall, slow, lone = rows
-    assert wall["status"] == "fully_truncated_flagged"
+    assert wall["status"] == "beyond_model"
     assert wall["policy_assigned"] is True
     assert wall["p_neo"] == 1.0
     assert wall["log_lr"] is None, "nan is emitted as JSON null"
@@ -799,7 +799,7 @@ def test_help_is_self_sufficient_for_a_digest2_user(capsys):
         cli.main(["score", "--help"])
     out, _err = capsys.readouterr()
     assert "$ pneo score" in out, "one worked example"
-    assert "fully_truncated_flagged" in out, "the D-19 status is documented"
+    assert "beyond_model" in out, "the D-19 status is documented"
     assert "exit status" in out
     assert "NOT a digest2 score" in out, "the score is not a digest2 score"
     for flag in ("--variant", "--h-extend-to", "--h-interpolation", "--n-rho",
@@ -999,7 +999,7 @@ def test_module_entry_point_in_a_subprocess(obsfile, tmp_path):
     assert [r["object_id"] for r in rows] == [
         "T000001", "T000002", "T000003", "T000004"
     ]
-    assert rows[1]["status"] == "fully_truncated_flagged"
+    assert rows[1]["status"] == "beyond_model"
     assert proc.stdout.count("\n") == 5, "header + four rows, nothing else"
 
 

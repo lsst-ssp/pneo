@@ -914,7 +914,7 @@ def test_truncated_H_gives_zero_likelihoods_and_warns(d2pair):
     assert res.lambda_neo == 0.0 and res.lambda_other == 0.0
     assert res.p_neo == 1.0
     assert np.isnan(res.log_lr)
-    assert res.status == "fully_truncated_flagged"
+    assert res.status == "beyond_model"
     assert res.policy_assigned is True
     assert np.all(res.node_density_neo == 0.0)
     # ... and the §2.6 diagnostic says exactly why.
@@ -1248,13 +1248,13 @@ def test_posterior_helper_gates_the_policy_on_the_mechanism():
 
     # THE policy case: 4500 evaluable nodes, all of the measure above support.
     p, l, s = _posterior(0.0, 0.0, 4500, 4500, 10.0, 10.0)
-    assert (p, s) == (1.0, "fully_truncated_flagged")
+    assert (p, s) == (1.0, "beyond_model")
     assert np.isnan(l)
     # ... and just over the threshold still fires
     assert _posterior(0.0, 0.0, 4500, 4500, 1.0, T)[2] == \
-        "fully_truncated_flagged"
+        "beyond_model"
 
-    # Every non-mechanism route to 0/0 must fall through to nan/both_zero.
+    # Every non-mechanism route to 0/0 must fall through to nan/no_support.
     for label, args in {
         "empty region": (0.0, 0.0, 0, 0, 0.0, 0.0),
         "no evaluable node (all masked)": (0.0, 0.0, 4500, 0, 0.0, 0.0),
@@ -1266,7 +1266,7 @@ def test_posterior_helper_gates_the_policy_on_the_mechanism():
             (0.0, 0.0, 4500, 4500, 1.0, np.nextafter(T, 0.0)),
     }.items():
         p, l, s = _posterior(*args)
-        assert np.isnan(p) and np.isnan(l) and s == "both_zero", label
+        assert np.isnan(p) and np.isnan(l) and s == "no_support", label
 
     # The predicate itself, including the deliberate n_h_finite == 0 choice.
     assert _fully_truncated_in_H(4500, 10.0, 10.0) is True
@@ -1354,7 +1354,7 @@ def test_policy_does_not_fire_on_zero_density_without_h_truncation(
         d2pair, case, backend, diagnostics):
     """Regression for the adversarial review's false positives.
 
-    These must come back nan with status "both_zero" and a warning that does
+    These must come back nan with status "no_support" and a warning that does
     NOT claim support truncation — the old trigger fired on the *symptom*
     (both Lambdas zero) and asserted a mechanism that had not occurred.
     """
@@ -1377,7 +1377,7 @@ def test_policy_does_not_fire_on_zero_density_without_h_truncation(
     # the fix
     assert np.isnan(res.p_neo), f"{case}/{backend}: p = {res.p_neo}"
     assert np.isnan(res.log_lr)
-    assert res.status == "both_zero"
+    assert res.status == "no_support"
     assert res.policy_assigned is False
     # and the warning must not lie
     assert "TRIAGE POLICY" not in msg
@@ -1438,7 +1438,7 @@ def test_all_nodes_masked_is_not_a_policy_case(d2pair):
     from pneo._classifier import _fully_truncated_in_H, _posterior
 
     assert _fully_truncated_in_H(0, 0.0, 0.0) is False
-    assert _posterior(0.0, 0.0, 9999, 0, 0.0, 0.0)[2] == "both_zero"
+    assert _posterior(0.0, 0.0, 9999, 0, 0.0, 0.0)[2] == "no_support"
 
 
 @pytest.mark.parametrize("backend", ["python", "rust"])
@@ -1459,14 +1459,14 @@ def test_fully_truncated_tracklet_is_policy_scored_one(d2pair, backend):
     # The policy.
     assert res.p_neo == 1.0
     assert np.isnan(res.log_lr), "log_lr must stay nan: there is no LR"
-    assert res.status == "fully_truncated_flagged"
+    assert res.status == "beyond_model"
     assert res.policy_assigned is True
     # The warning has to say what it is, and cite the decision.
     assert "TRIAGE POLICY ASSIGNMENT" in msg
     assert "NOT a posterior" in msg
     assert "D-19" in msg
     assert "11 of 11" in msg
-    assert "fully_truncated_flagged" in msg
+    assert "beyond_model" in msg
 
 
 def test_both_backends_agree_exactly_on_the_policy(d2pair):
@@ -1490,7 +1490,7 @@ def test_both_backends_agree_exactly_on_the_policy(d2pair):
     b, wb = out["rust"]
     assert a.p_neo == b.p_neo == 1.0
     assert np.isnan(a.log_lr) and np.isnan(b.log_lr)
-    assert a.status == b.status == "fully_truncated_flagged"
+    assert a.status == b.status == "beyond_model"
     assert a.policy_assigned and b.policy_assigned
     assert a.n_nodes == b.n_nodes
     assert wa == wb, "the two backends must raise the same warning text"
@@ -1579,7 +1579,7 @@ def test_classify_many_carries_the_policy_status(d2pair):
         assert flags == [False, True, False], (backend, flags)
         assert batch[1].p_neo == 1.0 and np.isnan(batch[1].log_lr)
         assert [r.status for r in batch] == [
-            "ok", "fully_truncated_flagged", "ok"
+            "ok", "beyond_model", "ok"
         ]
         # The reliable per-tracklet "unscorable" filter is now isnan(p_neo),
         # and it finds NOTHING here: the policy case IS scored.
@@ -1601,7 +1601,7 @@ def test_the_h_extension_removes_the_need_for_the_policy(interp):
     # Geometry chosen so that BOTH halves of the statement are visible, which
     # constrains it tightly once the D-19 trigger is gated on the mechanism:
     #   * the region must be ENTIRELY at/above 25.5, or the unextended pair
-    #     gets "both_zero" rather than the policy (correctly — that is the
+    #     gets "no_support" rather than the policy (correctly — that is the
     #     false-positive fix), and
     #   * it must be mostly BELOW 30, or the extension is 0/0 as well.
     # `_fully_truncated_case`'s V = 40 satisfies the first and fails the

@@ -806,7 +806,7 @@ def _result_from_core(
     # `_posterior` + `_warn_status` are the classifier's own shared
     # post-processing, imported rather than reimplemented: the posterior
     # convention, the status vocabulary (including the D-19
-    # "fully_truncated_flagged" triage policy) and the warning texts are
+    # "beyond_model" triage policy) and the warning texts are
     # therefore identical between the backends by construction, not by
     # agreement.
     #

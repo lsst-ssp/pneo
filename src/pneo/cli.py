@@ -14,7 +14,7 @@ faint-end extension that supersedes the D-14 clamp),
 ``h_interpolation = "none"``, the ``(1200, 50)`` grid, ``backend="auto"``, and
 the D-19 triage policy — which is implemented in the classifier's shared
 post-processing and is therefore always active.  Its effect is **visible**, not
-hidden: a policy-assigned row carries ``status = fully_truncated_flagged``, and
+hidden: a policy-assigned row carries ``status = beyond_model``, and
 its ``log_lr`` is ``nan`` because no likelihood ratio exists.  Every default is
 overridable by a flag.
 
@@ -91,14 +91,14 @@ RUST_CHUNK = 256
 #: ``ok``.  Terse on purpose: the classifier's own warning text is a paragraph,
 #: which is right for a library and wrong for a terminal.
 _STATUS_NOTES = {
-    "fully_truncated_flagged": (
+    "beyond_model": (
         "p_neo = 1.0 is a D-19 TRIAGE POLICY assignment, not a posterior: the "
         "whole admissible region lies fainter than the population model's H "
         "support, so both likelihoods are exactly zero and log_lr is nan. "
         "Empirically 11/11 such real NEOCP tracklets were true NEOs. Exclude "
         "these rows from any calibration statistic."
     ),
-    "both_zero": (
+    "no_support": (
         "both population components are zero everywhere in the admissible "
         "region and this is NOT the faint-end wall, so p_neo is undefined "
         "(nan). Usually a very bright and/or very slow tracklet the model "
@@ -120,7 +120,7 @@ _STATUS_NOTES = {
 #: the rows for which the classifier ran to completion.  Everything else in the
 #: status column is an ingestion failure or ``"error"``.
 CLASSIFIER_STATUSES = frozenset(
-    {"ok", "fully_truncated_flagged", "both_zero", "empty_region", "overflow",
+    {"ok", "beyond_model", "no_support", "empty_region", "overflow",
      "nan"}
 )
 
@@ -146,7 +146,7 @@ MAX_STDERR_NOTES = 50
 #: this: a run in which no row got one produced nothing usable and exits 1,
 #: whether that is because ingestion failed everywhere or because every
 #: admissible region came back empty.
-SCORED_STATUSES = frozenset({"ok", "fully_truncated_flagged"})
+SCORED_STATUSES = frozenset({"ok", "beyond_model"})
 
 
 class ConfigError(Exception):
@@ -622,7 +622,7 @@ def _json_ready(row: dict) -> dict:
 
     The text formats print ``inf``/``nan`` verbatim, because a human and awk
     both read them; JSON cannot carry them and stay standard.  Nothing is lost:
-    ``status`` says *why* a value is missing — ``fully_truncated_flagged``
+    ``status`` says *why* a value is missing — ``beyond_model``
     means the nan ``log_lr`` is the D-19 policy's "no likelihood ratio exists",
     ``ok`` with a null ``log_lr`` means a one-sided posterior (+/-inf), and an
     ingestion-failure status means the tracklet never existed.
@@ -703,7 +703,7 @@ def _tracklet_row(tr: Tracklet, scored: tuple | None) -> dict:
             lambda_neo=None if status == "error" else lam_neo,
             lambda_other=None if status == "error" else lam_other,
             n_nodes=n_nodes,
-            policy_assigned=status == "fully_truncated_flagged",
+            policy_assigned=status == "beyond_model",
         )
     return row
 
@@ -767,7 +767,7 @@ example
   $ pneo score neocp.psv
   object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
   T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
-  T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      fully_truncated_flagged
+  T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
   T000003    5      1.3333  2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
   T000004    1                                        X05                                single_detection
 
@@ -811,13 +811,13 @@ status values
   ok                       p_neo is a likelihood-based posterior. This includes
                            the one-sided cases (p_neo exactly 0 or 1, log_lr
                            -/+inf), which ARE posteriors.
-  fully_truncated_flagged  p_neo = 1.0 was ASSIGNED by the D-19 triage policy,
+  beyond_model  p_neo = 1.0 was ASSIGNED by the D-19 triage policy,
                            not computed: the whole admissible region is fainter
                            than the model's H support, both likelihoods are
                            exactly zero, and log_lr is nan for that reason. On
                            real NEOCP astrometry 11 of 11 such tracklets were
                            true NEOs (fast + faint => close => small).
-  both_zero                p_neo = nan. Both components are zero over a
+  no_support                p_neo = nan. Both components are zero over a
                            non-empty region and the cause is NOT the faint-end
                            wall (typically a bright/slow tracklet).
   empty_region             p_neo = nan. No bound orbit fits this attributable.
@@ -841,7 +841,7 @@ json output
   emitted as null (JSON cannot carry inf/nan); read status to tell why.
 
 exit status
-  0  at least one row carries a P(NEO) (status ok or fully_truncated_flagged)
+  0  at least one row carries a P(NEO) (status ok or beyond_model)
   1  no row does -- every object failed to ingest, or every region was empty
   2  configuration error: no population model, an unreadable --obscodes, a bad
      flag value

@@ -5,8 +5,10 @@ import pneo
 
 def test_imports():
     assert pneo.__version__
-    assert pneo.Attributable is not None
-    assert pneo.PopulationComponent is not None
+    for name in ("load_model", "classify", "read_observations", "posterior_map",
+                 "plot_posterior_map", "fetch", "PopulationModel",
+                 "PopulationComponent"):
+        assert getattr(pneo, name) is not None, name
 
 
 def test_constants():
