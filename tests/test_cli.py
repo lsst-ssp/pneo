@@ -43,7 +43,7 @@ from pneo.attributable import observer_state  # noqa: E402
 from pneo.backend import core_available  # noqa: E402
 from pneo.ingest import BAND_TO_V  # noqa: E402
 
-MODEL_PATH = os.path.join(REPO_ROOT, "data", "digest2.model.csv")
+from model_location import MODEL_PATH  # noqa: E402
 EPOCH = "2026-03-15T06:00:00"
 #: Coarse grid for everything whose assertion is about plumbing, not accuracy.
 FAST = ["--n-rho", "200", "--n-rhodot", "20"]
@@ -433,10 +433,8 @@ def test_resolve_model_order(tmp_path, monkeypatch):
     flag = tmp_path / "flag.csv"
     env = tmp_path / "env.csv"
     cache = tmp_path / "cache" / "digest2.model.csv"
-    data = tmp_path / "data" / "digest2.model.csv"
     cache.parent.mkdir()
-    data.parent.mkdir()
-    for p in (flag, env, cache, data):
+    for p in (flag, env, cache):
         p.write_text("x")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PNEO_CACHE_DIR", str(cache.parent))
@@ -447,8 +445,6 @@ def test_resolve_model_order(tmp_path, monkeypatch):
     monkeypatch.delenv(cli.MODEL_ENV_VAR)
     assert cli.resolve_model(None) == str(cache), "then the user cache"
     cache.unlink()
-    assert cli.resolve_model(None) == cli.LEGACY_MODEL_PATH, "then ./data"
-    data.unlink()
     with pytest.raises(cli.ConfigError, match="fetch-model"):
         cli.resolve_model(None)
 
@@ -456,9 +452,9 @@ def test_resolve_model_order(tmp_path, monkeypatch):
 def test_resolve_model_refuses_to_fall_through_from_a_named_path(monkeypatch,
                                                                 tmp_path):
     """A named-but-missing model is an error, not a fallback: reproducibility."""
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "digest2.model.csv").write_text("x")
-    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache" / "digest2.model.csv").write_text("x")
+    monkeypatch.setenv("PNEO_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(cli.MODEL_ENV_VAR, str(tmp_path / "gone.csv"))
     with pytest.raises(cli.ConfigError, match="PNEO_MODEL"):
         cli.resolve_model(None)
@@ -684,7 +680,7 @@ def test_unknown_obscode_falls_back_to_the_geocentre_with_a_warning(
     capsys, tmp_path, geometry, monkeypatch
 ):
     monkeypatch.delenv("PNEO_OBSCODES", raising=False)
-    monkeypatch.chdir(tmp_path)      # no ./data/ObsCodesF.html to find
+    monkeypatch.chdir(tmp_path)      # the per-test cache holds no code table
     path = _write_psv(tmp_path / "zzz.psv", [
         ("T1", geometry["neo"], 3, 15.0, "V", "ZZZ"),
     ])

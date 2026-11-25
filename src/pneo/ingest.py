@@ -93,7 +93,6 @@ __all__ = [
     "DEFAULT_MAX_ARC_HOURS",
     "FORMATS",
     "OBSCODE_ENV_VAR",
-    "OBSCODE_SEARCH_PATH",
     "URL_OBSCODES",
     "Detection",
     "Tracklet",
@@ -263,17 +262,6 @@ _OBSCODE_RE = re.compile(
 #: Environment variable naming a local MPC obscode table.
 OBSCODE_ENV_VAR = "PNEO_OBSCODES"
 
-#: Repository-relative paths searched (in order), after the per-user cache
-#: (:func:`pneo.paths.default_obscodes_path`), for a local MPC obscode table
-#: when neither ``--obscodes`` nor :data:`OBSCODE_ENV_VAR` is given.  The MPC
-#: publishes the table as an HTML page (``ObsCodesF.html``); the parser strips
-#: tags, so a plain-text save of the same table parses too.
-OBSCODE_SEARCH_PATH: tuple[str, ...] = (
-    os.path.join("data", "ObsCodesF.html"),
-    os.path.join("data", "ObsCodes.html"),
-    os.path.join("data", "obscodes.dat"),
-    "ObsCodesF.html",
-)
 
 
 def parse_obscodes(path: str) -> dict[str, dict]:
@@ -430,11 +418,14 @@ class ObscodeTable:
         move a site pneo already knows.
     ``"file"``
         a local copy of the MPC "List Of Observatory Codes" page: the ``path``
-        argument, else ``$PNEO_OBSCODES``, else the first entry of
-        :data:`OBSCODE_SEARCH_PATH` that exists *and* yields codes.  Loaded
-        lazily, once.  ``path`` suppresses the search entirely, so an explicit
-        table that cannot be read is reported through :attr:`load_error`
-        instead of being silently replaced by whatever is in ``./data``.
+        argument, else the first of ``$PNEO_OBSCODES`` and the per-user cache
+        copy (:func:`pneo.paths.default_obscodes_path`, written by
+        ``pneo fetch-obscodes``) that exists *and* yields codes.  The MPC
+        publishes the table as an HTML page; the parser strips tags, so a
+        plain-text save of it parses too.  Loaded lazily, once.  ``path``
+        suppresses the search entirely, so an explicit table that cannot be
+        read is reported through :attr:`load_error` instead of being silently
+        replaced by the cached copy.
     ``"fallback"``
         nothing knew the code (or the detection carried no station at all): the
         **geocentre** is used and a ``UserWarning`` is issued once per code — so
@@ -471,7 +462,6 @@ class ObscodeTable:
             out.append(env)
         if self._search:
             out.append(str(default_obscodes_path()))
-            out.extend(OBSCODE_SEARCH_PATH)
         return out
 
     def _ensure_loaded(self) -> dict[str, dict]:
@@ -495,8 +485,8 @@ class ObscodeTable:
                 self._loaded_from = os.path.abspath(cand)
                 break
             # An existing file that yields no codes at all is not "the table":
-            # keep looking, so one empty ./data/ObsCodesF.html does not mask a
-            # good copy further down the search path.
+            # keep looking, so an empty file named by $PNEO_OBSCODES does not
+            # mask a good copy in the cache.
         if (
             self._explicit
             and self._loaded_from is None

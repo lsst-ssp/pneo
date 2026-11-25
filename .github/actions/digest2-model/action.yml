@@ -1,15 +1,17 @@
 name: digest2 population model
 description: >
-  Put data/digest2.model.csv in place: restore it from the Actions cache keyed on
-  the sha256 pinned in src/pneo/fetch_model.py, or download it with that
-  script, then verify what we ended up with.
+  Put the population model in pneo's per-user cache: restore it from the
+  Actions cache keyed on the sha256 pinned in src/pneo/fetch_model.py, or
+  download it with pneo-fetch-model, then verify what we ended up with.
+  Exports PNEO_CACHE_DIR for the rest of the job, so the tests and the CLI find
+  the model there.  Requires pneo to be installed first.
 
 outputs:
   sha256-pinned:
     description: The sha256 pinned in src/pneo/fetch_model.py.
     value: ${{ steps.pin.outputs.sha256 }}
   sha256-actual:
-    description: The sha256 of the file that is now in data/.
+    description: The sha256 of the file that is now in the cache.
     value: ${{ steps.verify.outputs.sha256 }}
   matches-pin:
     description: '"true" when the file matches the pinned sha256.'
@@ -20,6 +22,16 @@ runs:
   steps:
     # The cache key is the pinned sha itself, so bumping KNOWN_SHA256 after an
     # upstream model refresh invalidates the cache automatically.
+    - name: Choose the cache directory
+      id: dir
+      shell: bash
+      run: |
+        set -euo pipefail
+        d="$RUNNER_TEMP/pneo-cache"
+        mkdir -p "$d"
+        echo "PNEO_CACHE_DIR=$d" >> "$GITHUB_ENV"
+        echo "model=$d/digest2.model.csv" >> "$GITHUB_OUTPUT"
+
     - name: Read the pinned model sha256
       id: pin
       shell: bash
@@ -37,7 +49,7 @@ runs:
       id: restore
       uses: actions/cache/restore@v6
       with:
-        path: data/digest2.model.csv
+        path: ${{ steps.dir.outputs.model }}
         key: digest2-model-${{ steps.pin.outputs.sha256 }}
 
     # Network is expected here; the script checks the CSV header and reports the
@@ -45,14 +57,14 @@ runs:
     - name: Fetch the model (cache miss)
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
-      run: python src/pneo/fetch_model.py
+      run: pneo-fetch-model --out "${{ steps.dir.outputs.model }}"
 
     - name: Verify the model
       id: verify
       shell: bash
       run: |
         set -euo pipefail
-        f=data/digest2.model.csv
+        f="${{ steps.dir.outputs.model }}"
         test -s "$f"
         sha="$(sha256sum "$f" | cut -d' ' -f1)"
         head -n1 "$f" | grep -q '^Model,Class,Q,e,i,H6,H8,H10' \
@@ -73,5 +85,5 @@ runs:
       if: steps.restore.outputs.cache-hit != 'true' && steps.verify.outputs.matches == 'true'
       uses: actions/cache/save@v6
       with:
-        path: data/digest2.model.csv
+        path: ${{ steps.dir.outputs.model }}
         key: digest2-model-${{ steps.pin.outputs.sha256 }}

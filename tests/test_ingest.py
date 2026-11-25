@@ -238,15 +238,17 @@ def test_obscode_table_warns_when_a_detection_has_no_station(tmp_path,
 
 
 def test_obscode_table_keeps_looking_past_an_empty_file(tmp_path, monkeypatch):
-    """One empty ./data/ObsCodesF.html must not mask a good copy behind it."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv(G.OBSCODE_ENV_VAR, raising=False)
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "ObsCodesF.html").write_text("<pre>\n</pre>\n")
-    (tmp_path / "data" / "ObsCodes.html").write_text(_OBSCODES_FIXTURE)
+    """An empty $PNEO_OBSCODES file must not mask a good copy in the cache."""
+    empty = tmp_path / "empty.html"
+    empty.write_text("<pre>\n</pre>\n")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "ObsCodesF.html").write_text(_OBSCODES_FIXTURE)
+    monkeypatch.setenv(G.OBSCODE_ENV_VAR, str(empty))
+    monkeypatch.setenv("PNEO_CACHE_DIR", str(cache))
     table = G.ObscodeTable()
     assert table.resolve("002")[3] == "file"
-    assert table.loaded_from.endswith("ObsCodes.html")
+    assert table.loaded_from == str(cache / "ObsCodesF.html")
 
 
 def test_obscode_fallback_warning_names_the_table_it_searched(tmp_path):

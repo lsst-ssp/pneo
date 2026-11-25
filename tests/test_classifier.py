@@ -59,11 +59,7 @@ from pneo.transforms import (
     topocentric_to_heliocentric,
 )
 
-MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data",
-    "digest2.model.csv",
-)
+from model_location import MODEL_PATH  # noqa: E402
 
 #: One fixed epoch for every hand-constructed case (results must not depend on
 #: when the test is run).

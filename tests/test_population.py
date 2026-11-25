@@ -38,8 +38,7 @@ from pneo.population import (
     read_digest2_model,
 )
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(REPO_ROOT, "data", "digest2.model.csv")
+from model_location import MODEL_PATH  # noqa: E402
 
 ANGLE_VOLUME = (2.0 * math.pi) ** 3
 
@@ -90,7 +89,7 @@ REFERENCE_TOTALS = {
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(MODEL_PATH),
-    reason=f"{MODEL_PATH} not present; run scripts/fetch_digest2_model.py",
+    reason=f"{MODEL_PATH} not present; run `pneo fetch-model`",
 )
 
 

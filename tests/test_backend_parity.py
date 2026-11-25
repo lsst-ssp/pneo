@@ -57,7 +57,7 @@ pytestmark = pytest.mark.skipif(
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-MODEL_PATH = os.path.join(REPO, "data", "digest2.model.csv")
+from model_location import MODEL_PATH  # noqa: E402
 GATE_GEN = os.path.join(REPO, "validation", "output", "gate_v0", "gen.npz")
 
 # Acceptance bars from the approved design (issue #1).

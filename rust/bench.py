@@ -38,7 +38,9 @@ from pneo.classifier import classify, classify_many  # noqa: E402
 from pneo.population import Digest2Histogram  # noqa: E402
 
 GEN = os.path.join(REPO, "validation", "output", "gate_v0", "gen.npz")
-MODEL = os.path.join(REPO, "data", "digest2.model.csv")
+from pneo.paths import default_model_path  # noqa: E402
+
+MODEL = os.environ.get("PNEO_MODEL", "").strip() or str(default_model_path())
 
 
 def load(n: int):

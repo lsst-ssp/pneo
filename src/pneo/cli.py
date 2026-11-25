@@ -67,10 +67,6 @@ __all__ = ["main", "resolve_model", "OUTPUT_COLUMNS", "MODEL_ENV_VAR"]
 #: Environment variable naming the digest2 population model file.
 MODEL_ENV_VAR = "PNEO_MODEL"
 
-#: Where ``resolve_model`` looks last: the repository-relative location a
-#: source checkout populates with ``scripts/fetch_digest2_model.py``.
-LEGACY_MODEL_PATH = os.path.join("data", "digest2.model.csv")
-
 #: The default (TSV/CSV) output columns, in order.  Names are
 #: machine-friendly — no spaces, no units in the header — because these files
 #: get fed to ``awk``, ``cut`` and ``pandas``; the units are in ``--help``.
@@ -167,8 +163,7 @@ def resolve_model(flag: str | None = None) -> str:
 
     Resolution order is ``--model PATH``, then ``$PNEO_MODEL``, then the
     per-user cache (:func:`pneo.paths.default_model_path`, where
-    ``pneo fetch-model`` writes it), then ``./data/digest2.model.csv`` (a
-    source checkout).  A path that was named explicitly (by flag or
+    ``pneo fetch-model`` writes it).  A path that was named explicitly (by flag or
     environment) and does not exist is an error naming *that* path — silently
     falling through to a different model would make the run unreproducible.
 
@@ -187,13 +182,11 @@ def resolve_model(flag: str | None = None) -> str:
             f"the population model given by {how} does not exist: {path}"
         )
     cached = str(default_model_path())
-    for path in (cached, LEGACY_MODEL_PATH):
-        if os.path.exists(path):
-            return path
+    if os.path.exists(cached):
+        return cached
     raise ConfigError(
         "no digest2 population model found. Looked at: --model (not given), "
-        f"${MODEL_ENV_VAR} (not set), {cached} and {LEGACY_MODEL_PATH} "
-        "(neither exists).\n"
+        f"${MODEL_ENV_VAR} (not set), {cached} (does not exist).\n"
         f"  Run `pneo fetch-model` to download it (~4 MB) into {cached}, "
         "or pass --model PATH."
     )
@@ -923,8 +916,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument(
         "--model", metavar="PATH", default=None,
         help=f"digest2 population model CSV. Default: ${MODEL_ENV_VAR} if set, "
-             f"else {default_model_path()}, else {LEGACY_MODEL_PATH}. Get it "
-             "with `pneo fetch-model`.",
+             f"else {default_model_path()}. Get it with `pneo fetch-model`.",
     )
     g.add_argument(
         "--variant", choices=D2_VARIANTS, default="All",
