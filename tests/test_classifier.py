@@ -1130,6 +1130,22 @@ def test_plot_posterior_map_colorbar_flag_on_owned_figure(d2pair):
     plt.close(ax.figure)
 
 
+def test_plot_posterior_map_without_matplotlib_explains_the_extra(d2pair,
+                                                                  monkeypatch):
+    """matplotlib is optional: a missing install names the `plot` extra."""
+    import sys
+
+    neo, other = d2pair
+    R, V = _observer()
+    att = opposition_tracklet(1.0, 21.0, R_obs=R)
+    res = classify(att, neo, other, R_obs=R, V_obs=V, n_rho=40, n_rhodot=20)
+    for mod in [m for m in sys.modules if m == "matplotlib" or m.startswith("matplotlib.")]:
+        monkeypatch.delitem(sys.modules, mod)
+    monkeypatch.setitem(sys.modules, "matplotlib", None)  # makes import fail
+    with pytest.raises(ImportError, match=r"pneo\[plot\]"):
+        res.plot_posterior_map()
+
+
 def test_plot_posterior_map_bad_component(d2pair):
     neo, other = d2pair
     R, V = _observer()

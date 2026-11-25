@@ -42,13 +42,14 @@ att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,     # rad, ra
                    epoch=Time("2026-03-15T06:00:00"), v_mag=21.0)
 res = classify(att, neo, other)
 print(res.p_neo, res.log_lr)
-res.plot_posterior_map()   # (rho, rho_dot) diagnostic
+res.plot_posterior_map()   # (rho, rho_dot) diagnostic; needs `pip install 'pneo[plot]'`
 ```
 
 ## Installation
 
 ```bash
 pip install pneo            # wheels: linux x86_64, macOS arm64, Windows x64 (CPython >= 3.11)
+pip install 'pneo[plot]'    # adds matplotlib, for the diagnostic plots
 pneo fetch-model            # the MPC digest2 population model (~4 MB) -> user cache
 pneo fetch-obscodes         # the MPC observatory-code table -> user cache
 ```

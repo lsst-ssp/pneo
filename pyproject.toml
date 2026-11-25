@@ -66,11 +66,13 @@ classifiers = [
 dependencies = [
     "numpy>=1.24",
     "astropy>=5.3",
-    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+# matplotlib is needed only by the diagnostic plotting methods
+# (ClassificationResult.plot_*); scoring never imports it.
+plot = ["matplotlib>=3.7"]
+dev = ["pytest>=7", "matplotlib>=3.7"]
 
 [project.scripts]
 pneo = "pneo.cli:main"

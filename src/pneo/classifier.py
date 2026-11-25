@@ -92,8 +92,24 @@ N_RHO_DEFAULT: int = 1200
 N_RHODOT_DEFAULT: int = 50
 
 
+def _require_matplotlib():
+    """Import matplotlib for the diagnostic plots, or explain how to get it.
+
+    matplotlib is an optional dependency (the ``plot`` extra): scoring never
+    needs it, so it is imported only when a plotting method is called.
+    """
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "pneo's diagnostic plots need matplotlib, which is an optional "
+            "dependency; install it with `pip install 'pneo[plot]'`"
+        ) from exc
+
+
 def _null_formatter():
     """matplotlib's NullFormatter, imported lazily (diagnostics only)."""
+    _require_matplotlib()
     from matplotlib.ticker import NullFormatter
 
     return NullFormatter()
@@ -384,6 +400,7 @@ class ClassificationResult:
                 f"component must be 'neo', 'other' or 'both', got {component!r}"
             )
 
+        _require_matplotlib()
         import matplotlib.pyplot as plt
         from matplotlib.colors import LogNorm, Normalize
 
