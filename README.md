@@ -99,7 +99,7 @@ git clone https://github.com/lsst-ssp/pneo && cd pneo
 pip install -e ".[dev]"
 pneo fetch-model                        # the population model, into the user cache
 rust/build.sh                           # optional: build the Rust kernel (needs cargo)
-pytest
+pytest -n auto                          # run the tests in parallel
 ```
 
 An editable install is pure Python until `rust/build.sh` compiles the kernel into the

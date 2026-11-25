@@ -100,7 +100,7 @@ jobs:
       - name: pytest (PNEO_BACKEND=python)
         env:
           PNEO_BACKEND: python
-        run: python -m pytest -q -rs --durations=15 --color=yes
+        run: python -m pytest -n auto -q -rs --durations=15 --color=yes
 
   # ---------------------------------------------------------------------------
   # Rust kernel: build it, run the in-crate tests, then run the whole Python
@@ -206,7 +206,7 @@ jobs:
       - name: pytest (PNEO_BACKEND=rust)
         env:
           PNEO_BACKEND: rust
-        run: python -m pytest -q -rs --durations=15 --color=yes
+        run: python -m pytest -n auto -q -rs --durations=15 --color=yes
 
   # ---------------------------------------------------------------------------
   # No lint job on purpose.  As of this workflow the repository carries no
