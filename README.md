@@ -15,8 +15,8 @@ at full LSST depth.
 
 ```bash
 pip install pneo            # CPython >= 3.11
-pneo fetch-model            # once: download the MPC population model (~4 MB)
-pneo fetch-obscodes         # once: download the MPC observatory-code table
+pneo fetch            # once: download the MPC population model (~4 MB)
+pneo fetch         # once: download the MPC observatory-code table
 ```
 
 Both are stored in a per-user cache; see
@@ -32,11 +32,11 @@ results about 40 times more slowly.
 
 ## Quick start: command line
 
-`pneo score` reads astrometry in ADES PSV or MPC 80-column format (detected
+`pneo classify` reads astrometry in ADES PSV or MPC 80-column format (detected
 automatically), fits one tracklet per object, and writes one row per tracklet:
 
 ```console
-$ pneo score neocp.psv
+$ pneo classify neocp.psv
 object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
 T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
 T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
@@ -49,7 +49,7 @@ obtained: `ok` is a computed probability; `beyond_model` marks a very faint,
 nearby object beyond the population model's size range, assigned P(NEO) = 1 by rule; any
 other value names why the object could not be scored. Use only `status == ok` rows when
 checking calibration. Output is tab-separated by default (`--format csv` or `json` for
-other formats). `pneo score --help` lists every option, and [docs/cli.md](https://github.com/lsst-ssp/pneo/blob/main/docs/cli.md)
+other formats). `pneo classify --help` lists every option, and [docs/cli.md](https://github.com/lsst-ssp/pneo/blob/main/docs/cli.md)
 describes them in more detail.
 
 ## Quick start: Python
@@ -59,7 +59,7 @@ from astropy.time import Time
 from pneo import Attributable, Digest2Component, classify
 from pneo.paths import default_model_path
 
-# The population model, as `pneo score` uses it (run `pneo fetch-model` first).
+# The population model, as `pneo classify` uses it (run `pneo fetch` first).
 neo, other = Digest2Component.neo_other_pair(default_model_path(), h_extend_to=30.0)
 
 att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,  # rad, rad/day
@@ -97,7 +97,7 @@ The Rust kernel scores one tracklet in about 12 ms on a single CPU core, or abou
 ```bash
 git clone https://github.com/lsst-ssp/pneo && cd pneo
 pip install -e ".[dev]"
-pneo fetch-model                        # the population model, into the user cache
+pneo fetch                        # the population model, into the user cache
 rust/build.sh                           # optional: build the Rust kernel (needs cargo)
 pytest -n auto                          # run the tests in parallel
 ```

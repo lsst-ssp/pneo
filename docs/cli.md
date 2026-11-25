@@ -4,29 +4,29 @@
 
 | Command | What it does |
 |---|---|
-| `pneo score FILE ...` | Classify the tracklets in one or more observation files |
-| `pneo fetch-model` | Download the MPC digest2 population model (~4 MB) |
-| `pneo fetch-obscodes` | Download the MPC list of observatory codes |
+| `pneo classify FILE ...` | Classify the tracklets in one or more observation files |
+| `pneo fetch` | Download the MPC digest2 population model (~4 MB) |
+| `pneo fetch` | Download the MPC list of observatory codes |
 
-`pneo score --help` is self-contained and lists every option. This page explains the
+`pneo classify --help` is self-contained and lists every option. This page explains the
 behavior behind them.
 
 ## Downloaded files
 
-`pneo fetch-model` and `pneo fetch-obscodes` save their downloads in a per-user cache
-directory, where `pneo score` finds them from any working directory:
+`pneo fetch` and `pneo fetch` save their downloads in a per-user cache
+directory, where `pneo classify` finds them from any working directory:
 
 | Platform | Directory |
 |---|---|
 | Linux, macOS | `~/.cache/pneo` (or `$XDG_CACHE_HOME/pneo` if set) |
 | Windows | `%LOCALAPPDATA%\pneo\Cache` |
 
-Set `$PNEO_CACHE_DIR` to use another directory. `pneo fetch-model --help` prints the
+Set `$PNEO_CACHE_DIR` to use another directory. `pneo fetch --help` prints the
 path in use.
 
 ## Input
 
-`pneo score` reads **ADES PSV** or **MPC 80-column** astrometry, detected from the file
+`pneo classify` reads **ADES PSV** or **MPC 80-column** astrometry, detected from the file
 content (`--obs-format` forces one). Detections are grouped by object across all the
 files given, so an object split over two files becomes one tracklet.
 
@@ -83,12 +83,12 @@ Calibration checks (comparing summed `p_neo` with observed NEO counts) should us
 row with a failure status and one line on stderr; the rest of the run continues. If a
 batched call to the Rust kernel fails, its tracklets are re-scored one at a time.
 Warnings, per-row notes and the run summary all go to stderr, so stdout carries only
-data and `pneo score obs.psv > scores.tsv` is safe. `-q` suppresses the summary line.
+data and `pneo classify obs.psv > scores.tsv` is safe. `-q` suppresses the summary line.
 
 ## The population model
 
 `pneo` looks for the model in this order: `--model PATH`, then `$PNEO_MODEL`, then the
-[per-user cache](#downloaded-files) (where `pneo fetch-model` writes it).
+[per-user cache](#downloaded-files) (where `pneo fetch` writes it).
 
 The defaults are the configuration used in the paper:
 
@@ -111,8 +111,8 @@ The defaults are the configuration used in the paper:
 ## Observatory codes
 
 `pneo` has a built-in table of 14 survey sites. Any other station needs the MPC list of
-observatory codes: `pneo fetch-obscodes` downloads it to the [user cache](#downloaded-files), where
-`pneo score` looks by default (`--obscodes PATH` or `$PNEO_OBSCODES` point elsewhere).
+observatory codes: `pneo fetch` downloads it to the [user cache](#downloaded-files), where
+`pneo classify` looks by default (`--obscodes PATH` or `$PNEO_OBSCODES` point elsewhere).
 Scoring never touches the network.
 
 An unknown code falls back to the center of the Earth, with a warning, and this matters:

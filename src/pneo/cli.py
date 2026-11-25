@@ -1,6 +1,6 @@
 """The ``pneo`` command-line tool.
 
-``pneo score OBSFILE...`` is the counterpart of running ``digest2`` on an
+``pneo classify OBSFILE...`` is the counterpart of running ``digest2`` on an
 observation file: it ingests ADES PSV or MPC 80-column astrometry
 (:mod:`pneo._ingest`), classifies one tracklet per object, and writes one
 row per tracklet to stdout.
@@ -29,7 +29,7 @@ caught before any scoring is done.
 
 **stdout carries data, stderr carries everything else.**  Warnings, per-row
 failure notes and the final summary all go to stderr, so
-``pneo score obs.psv > scores.tsv`` yields a clean parseable file.
+``pneo classify obs.psv > scores.tsv`` yields a clean parseable file.
 
 ``--workers`` defaults to ``os.cpu_count()`` and means different machinery on
 each backend; see :func:`_score_tracklets` and the ``--help`` text.
@@ -73,10 +73,10 @@ MODEL_ENV_VAR = "PNEO_MODEL"
 OUTPUT_COLUMNS = (
     "object_id",
     "n_obs",
-    "arc_h",
+    "arc_hours",
     "epoch",
     "obscode",
-    "V",
+    "mag_v",
     "p_neo",
     "log_lr",
     "status",
@@ -92,17 +92,16 @@ RUST_CHUNK = 256
 #: which is right for a library and wrong for a terminal.
 _STATUS_NOTES = {
     "beyond_model": (
-        "p_neo = 1.0 is a D-19 TRIAGE POLICY assignment, not a posterior: the "
-        "whole admissible region lies fainter than the population model's H "
-        "support, so both likelihoods are exactly zero and log_lr is nan. "
-        "Empirically 11/11 such real NEOCP tracklets were true NEOs. Exclude "
-        "these rows from any calibration statistic."
+        "p_neo = 1.0 is assigned by rule, not computed: every orbit consistent "
+        "with the tracklet implies an object fainter (smaller) than the "
+        "population model covers, so both likelihoods are zero and log_lr is "
+        "empty. Such tracklets are very close and very small; on real NEOCP "
+        "data all 11 were NEOs. Leave these rows out of calibration checks."
     ),
     "no_support": (
-        "both population components are zero everywhere in the admissible "
-        "region and this is NOT the faint-end wall, so p_neo is undefined "
-        "(nan). Usually a very bright and/or very slow tracklet the model "
-        "holds no objects for."
+        "neither population component has objects anywhere consistent with "
+        "the tracklet, so p_neo is undefined. Usually a very bright and/or "
+        "very slow tracklet."
     ),
     "empty_region": (
         "the admissible region is empty: no bound orbit is consistent with "
@@ -125,7 +124,7 @@ CLASSIFIER_STATUSES = frozenset(
 )
 
 #: Above this fraction of scored tracklets resolved geocentrically, the run gets
-#: a prominent stderr warning naming ``pneo fetch-obscodes``.  A geocentric
+#: a prominent stderr warning naming ``pneo fetch``.  A geocentric
 #: stand-in for a real site moves the observer by up to one Earth radius, which
 #: on a survey station is worth up to 0.17 in p_neo: measured by scoring the WP8
 #: pilot's 499 real tracklets twice, once with the MPC table and once without.
@@ -163,14 +162,14 @@ def resolve_model(flag: str | None = None) -> str:
 
     Resolution order is ``--model PATH``, then ``$PNEO_MODEL``, then the
     per-user cache (:func:`pneo.paths.default_model_path`, where
-    ``pneo fetch-model`` writes it).  A path that was named explicitly (by flag or
+    ``pneo fetch`` writes it).  A path that was named explicitly (by flag or
     environment) and does not exist is an error naming *that* path — silently
     falling through to a different model would make the run unreproducible.
 
     Raises
     ------
     ConfigError
-        With a message naming ``pneo fetch-model`` when nothing was found.
+        With a message naming ``pneo fetch`` when nothing was found.
     """
     env = os.environ.get(MODEL_ENV_VAR, "").strip()
     for path, how in ((flag, "--model"), (env or None, f"${MODEL_ENV_VAR}")):
@@ -187,7 +186,7 @@ def resolve_model(flag: str | None = None) -> str:
     raise ConfigError(
         "no digest2 population model found. Looked at: --model (not given), "
         f"${MODEL_ENV_VAR} (not set), {cached} (does not exist).\n"
-        f"  Run `pneo fetch-model` to download it (~4 MB) into {cached}, "
+        f"  Run `pneo fetch` to download it (~4 MB) into {cached}, "
         "or pass --model PATH."
     )
 
@@ -356,7 +355,7 @@ def _score_tracklets(
     #   * the rust path needs the pair anyway, and the workers <= 1 python path
     #     can reuse it instead of parsing the 45,936-bin file a second time.
     #
-    # Note this happens BEFORE the empty-input shortcut below: `pneo score
+    # Note this happens BEFORE the empty-input shortcut below: `pneo classify
     # --h-extend-to 10` on a file with no usable tracklets is a configuration
     # error (exit 2) whether or not there was anything to score.  Reporting
     # "nothing scored" (exit 1) for a run whose configuration was never valid
@@ -584,10 +583,10 @@ def _row_cells(row: dict) -> list[str]:
     return [
         _text(row["object_id"]),
         str(row["n_obs"]),
-        "" if row["arc_h"] is None else _num(row["arc_h"], ".4f"),
+        "" if row["arc_hours"] is None else _num(row["arc_hours"], ".4f"),
         _text(row["epoch"]),
         _text(row["obscode"]),
-        "" if row["V"] is None else _num(row["V"], ".2f"),
+        "" if row["mag_v"] is None else _num(row["mag_v"], ".2f"),
         "" if row["p_neo"] is None else _num(row["p_neo"], ".6g"),
         "" if row["log_lr"] is None else _num(row["log_lr"], ".6g"),
         _text(row["status"]),
@@ -602,7 +601,9 @@ def _write(rows: list[dict], fmt: str, stream) -> None:
             # not.  `_json_ready` has already turned every non-finite float
             # into null, so this only ever asserts that.
             stream.write(
-                json.dumps(_json_ready(row), default=_json_default,
+                json.dumps(_json_ready({k: v for k, v in row.items()
+                                        if k not in _INTERNAL_FIELDS}),
+                           default=_json_default,
                            allow_nan=False) + "\n"
             )
         return
@@ -650,12 +651,15 @@ def _json_default(obj):
 #: :func:`_tracklet_row` and :func:`_failure_row` produce exactly this key set,
 #: so `--format json` has one schema for every line.
 _ROW_FIELDS = (
-    "seq", "object_id", "n_obs", "arc_h", "epoch", "epoch_jd_utc", "obscode",
-    "V", "p_neo", "log_lr", "status", "message", "ra", "dec", "ra_rate",
+    "seq", "object_id", "n_obs", "arc_hours", "epoch", "epoch_mjd", "obscode",
+    "mag_v", "p_neo", "log_lr", "status", "message", "ra", "dec", "ra_rate",
     "dec_rate", "resid_rms_arcsec", "bands", "obscode_source", "lon_deg",
     "lat_deg", "height_m", "truncated_arc", "n_detections_seen", "source",
-    "lambda_neo", "lambda_other", "n_nodes", "policy_assigned",
+    "lambda_neo", "lambda_other",
 )
+
+#: Fields used internally (input order) and left out of the JSON output.
+_INTERNAL_FIELDS = ("seq",)
 
 
 def _tracklet_row(tr: Tracklet, scored: tuple | None) -> dict:
@@ -670,18 +674,19 @@ def _tracklet_row(tr: Tracklet, scored: tuple | None) -> dict:
         seq=tr.seq,
         object_id=tr.object_id,
         n_obs=tr.n_obs,
-        arc_h=tr.arc_hours,
+        arc_hours=tr.arc_hours,
         epoch=tr.epoch_isot + "Z",
-        epoch_jd_utc=tr.epoch_jd_utc,
+        epoch_mjd=tr.epoch_jd_utc - 2400000.5,
         obscode=tr.obscode,
-        V=tr.v_mag,
+        mag_v=tr.v_mag,
         status="error",
         message="no result was returned for this tracklet",
         # provenance / diagnostics: JSON only, not in the text columns
-        ra=tr.ra,
-        dec=tr.dec,
-        ra_rate=tr.ra_rate,
-        dec_rate=tr.dec_rate,
+        # degrees and deg/day; ra_rate is the on-sky rate (x cos dec)
+        ra=float(np.degrees(tr.ra)),
+        dec=float(np.degrees(tr.dec)),
+        ra_rate=float(np.degrees(tr.ra_rate) * np.cos(tr.dec)),
+        dec_rate=float(np.degrees(tr.dec_rate)),
         resid_rms_arcsec=tr.resid_rms_arcsec,
         bands=list(tr.bands),
         obscode_source=tr.obscode_source,
@@ -691,7 +696,6 @@ def _tracklet_row(tr: Tracklet, scored: tuple | None) -> dict:
         truncated_arc=tr.truncated_arc,
         n_detections_seen=tr.n_detections_seen,
         source=tr.source,
-        policy_assigned=False,
     )
     if scored is not None:
         (_i, p, llr, lam_neo, lam_other, n_nodes, status, message, _n) = scored
@@ -702,8 +706,6 @@ def _tracklet_row(tr: Tracklet, scored: tuple | None) -> dict:
             message=message,
             lambda_neo=None if status == "error" else lam_neo,
             lambda_other=None if status == "error" else lam_other,
-            n_nodes=n_nodes,
-            policy_assigned=status == "beyond_model",
         )
     return row
 
@@ -726,7 +728,6 @@ def _failure_row(fail) -> dict:
         message=fail.message,
         source=fail.source,
         bands=[],
-        policy_assigned=False,
     )
     return row
 
@@ -762,100 +763,65 @@ def _positive_int(value: str) -> int:
 
 _EPILOG = """\
 example
-  $ pneo fetch-model                    # once: the MPC population model
-  $ pneo fetch-obscodes                 # once: the MPC observatory codes
-  $ pneo score neocp.psv
-  object_id  n_obs  arc_h   epoch                     obscode  V      p_neo     log_lr   status
-  T000001    4      0.7500  2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
-  T000002    3      0.0667  2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
-  T000003    5      1.3333  2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
-  T000004    1                                        X05                                single_detection
+  $ pneo fetch                          # once: the population model and the
+                                        # MPC observatory codes
+  $ pneo classify neocp.psv
+  object_id  n_obs  arc_hours  epoch                     obscode  mag_v  p_neo     log_lr   status
+  T000001    4      0.7500     2026-03-15T06:00:00.000Z  X05      19.77  1         inf      ok
+  T000002    3      0.0667     2026-03-15T06:00:00.000Z  X05      22.62  1         nan      beyond_model
+  T000003    5      1.3333     2026-03-15T06:00:00.000Z  F51      20.25  0.929963  2.58612  ok
+  T000004    1                                           X05                                single_detection
 
-  Columns are TAB-separated (the alignment above is for reading only) and a
-  field with no value is EMPTY, as in row T000004.  One row per object, in the
-  order the objects appear in the input.
+  Columns are TAB-separated (aligned above for reading) and a field with no
+  value is empty. One row per object, in the order the objects first appear.
 
-the columns
-  object_id  trkSub, else provID, else permID (ADES); columns 1-12 verbatim,
-             not unpacked (MPC 80-column).
-  n_obs      detections in the fitted tracklet -- or, on a failed row, the
-             detections seen for that object.
-  arc_h      arc length of the fitted tracklet [hours].
-  epoch      UTC epoch of the attributable = the FIRST detection's time, which
-             is also what digest2 anchors on.
-  obscode    MPC observatory code of the fitted tracklet's station.
-  V          median band-corrected Johnson V over the tracklet, using digest2's
-             own band offsets, entry for entry [D-5]. ONE DELIBERATE
-             DIVERGENCE [D-20]: an MPC 80-column record with a magnitude but a
-             BLANK band is converted as V (offset 0.0), where digest2's own
-             80-column reader applies its -0.8 unknown-band fallback -- so
-             pneo is 0.80 mag fainter there. A blank band in pre-ADES
-             astrometry is an unfiltered/visual magnitude, and -0.8 is
-             digest2's crudest fallback, applied only because a different
-             parser ran; pneo's ADES and 80-column paths agree with each
-             other instead. Every such record is counted and reported on
-             stderr. Named bands agree with digest2 exactly, on both formats.
-             (pneo also accepts more observation types than digest2, which
-             keeps only note-2 C/S/B; pneo rejects only the record types
-             whose columns are not optical RA/Dec at all -- satellite, roving
-             observer, radar.)
-  p_neo      P(NEO | tracklet): a calibrated posterior, thresholdable against a
-             contamination budget. NOT a digest2 score -- digest2's 0-100 is a
-             fraction of tagged model population and predicts ~6x too many NEOs.
-             Printed with %.6g, so a very small value comes out as 1.2e-09.
-  log_lr     ln(Lambda_NEO / Lambda_other), the prior-free sufficient statistic;
-             +/-inf where one component has no support at all.
-  status     see below.
-
-status values
-  ok                       p_neo is a likelihood-based posterior. This includes
-                           the one-sided cases (p_neo exactly 0 or 1, log_lr
-                           -/+inf), which ARE posteriors.
-  beyond_model  p_neo = 1.0 was ASSIGNED by the D-19 triage policy,
-                           not computed: the whole admissible region is fainter
-                           than the model's H support, both likelihoods are
-                           exactly zero, and log_lr is nan for that reason. On
-                           real NEOCP astrometry 11 of 11 such tracklets were
-                           true NEOs (fast + faint => close => small).
-  no_support                p_neo = nan. Both components are zero over a
-                           non-empty region and the cause is NOT the faint-end
-                           wall (typically a bright/slow tracklet).
-  empty_region             p_neo = nan. No bound orbit fits this attributable.
-  overflow, nan            p_neo = 0.5 / nan; see the warning on stderr.
-  single_detection, no_magnitude, fit_failed, no_detections
-                           the object never became a tracklet; the reason is on
-                           stderr. Nothing was classified, so p_neo is empty.
-  error                    the classifier raised on this tracklet; the message
-                           is on stderr. One bad tracklet never stops the run.
-
-  Any calibration statistic (reliability, expected NEO count, ECE, Brier) must
-  use ONLY status == ok. A policy-assigned row carries no likelihood
-  information. Ranking statistics (AUC) may include it -- its rank is the claim.
+columns
+  object_id  trkSub, else provID, else permID (ADES); columns 1-12 (MPC 80).
+  n_obs      detections in the tracklet used (on a failed row: seen in total).
+  arc_hours  time spanned by the tracklet.
+  epoch      UTC time of the first detection, where position and rates are fit.
+  obscode    MPC observatory code.
+  mag_v      median Johnson V over the tracklet, converted with digest2's band
+             offsets. One difference from digest2: an MPC 80-column record
+             with a blank band is read as V (digest2 applies -0.8 mag), so
+             pneo reads it 0.8 mag fainter; such records are counted on stderr.
+  p_neo      probability that the object is an NEO (printed with %.6g).
+  log_lr     natural log of the NEO-to-other likelihood ratio; +/-inf when only
+             one class has objects consistent with the tracklet.
+  status     how the row was obtained:
+    ok             a computed probability (including exactly 0 or 1).
+    beyond_model   every consistent orbit is fainter (smaller) than the model
+                   covers -- a very close, very small object. p_neo = 1 by
+                   rule; log_lr is empty. Leave out of calibration checks.
+    no_support     neither class has objects consistent with the tracklet;
+                   p_neo is undefined.
+    empty_region   no bound orbit fits the tracklet; p_neo is undefined.
+    overflow, nan  numerical problems; see stderr.
+    single_detection, no_magnitude, fit_failed, no_detections
+                   the object could not become a tracklet; see stderr.
+    error          classification raised; see stderr. The run continues.
 
 json output
-  --format json writes one strict-RFC-8259 object per line with every field:
-  the attributable (ra, dec, ra_rate, dec_rate in rad and rad/day), epoch_jd_utc,
-  both Lambdas, n_nodes, the fit residual RMS, the bands seen, the resolved
-  lon/lat/height and how the obscode was resolved (obscode_source: builtin,
-  file, geocenter or fallback), and policy_assigned. Non-finite floats are
-  emitted as null (JSON cannot carry inf/nan); read status to tell why.
+  --format json writes one JSON object per line with every field: the fitted
+  position and rates (ra, dec [deg]; ra_rate = d(ra)/dt * cos(dec), dec_rate
+  [deg/day]), epoch_mjd, both likelihoods, the fit residual RMS, the bands
+  seen, the observer location and how it was found (obscode_source: builtin,
+  file, geocenter or fallback), and whether the arc was truncated. Infinite
+  and undefined numbers are written as null; status says why.
 
 exit status
-  0  at least one row carries a P(NEO) (status ok or beyond_model)
-  1  no row does -- every object failed to ingest, or every region was empty
-  2  configuration error: no population model, an unreadable --obscodes, a bad
-     flag value
+  0  at least one row has a P(NEO) (status ok or beyond_model)
+  1  no row does
+  2  configuration error (no population model, unreadable --obscodes, bad flag)
 """
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pneo",
-        # Pre-wrapped: RawDescriptionHelpFormatter (which the epilog needs)
-        # does not reflow the description, so it is written to fit 79 columns.
         description=(
-            "Bayesian NEO tracklet classification: P(NEO) for each tracklet\n"
-            "in an ADES PSV or MPC 80-column observation file."
+            "The probability that each tracklet in an ADES PSV or MPC\n"
+            "80-column observation file is a near-Earth object."
         ),
         epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -865,214 +831,163 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    score = sub.add_parser(
-        "score",
+    cls = sub.add_parser(
+        "classify",
         help="classify the tracklets in one or more observation files",
-        # Pre-wrapped to 79 columns; see the note on the parent parser.
         description=(
-            "Ingest observation files, fit one attributable per object, and write\n"
-            "one row per tracklet to stdout.\n"
+            "Read observation files, fit one tracklet per object, and write\n"
+            "one row per object to stdout. The defaults are the configuration\n"
+            "used in the paper.\n"
             "\n"
-            "Scoring defaults are the D-18/D-19 OPERATIONAL configuration -- the\n"
-            "All model variant, h_extend_to = 30, h_interpolation = none, the\n"
-            "(1200, 50) grid, backend auto, and the D-19 triage policy active --\n"
-            "not the library defaults. Every one of them is overridable below.\n"
-            "\n"
-            "Ingestion and scoring degrade PER TRACKLET: one object that cannot be\n"
-            "read or classified is one row with a failure status plus a line on\n"
-            "stderr, never a lost run. Warnings, per-row notes and the summary all\n"
-            "go to stderr, so stdout carries nothing but data."
+            "An object that cannot be read or classified becomes one row with a\n"
+            "failure status and a line on stderr; the run continues. Warnings\n"
+            "and the summary go to stderr, so stdout carries only data."
         ),
         epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    score.add_argument(
+    cls.add_argument(
         "obsfile", nargs="+", metavar="OBSFILE",
-        help="observation file(s): ADES PSV or MPC 80-column, auto-detected "
-             "from content. Detections are grouped across all files, so one "
-             "object split over two files becomes one tracklet.",
+        help="observation file(s), ADES PSV or MPC 80-column (detected from "
+             "the content). Detections are grouped by object across files.",
     )
-
-    g = score.add_argument_group("output")
-    g.add_argument(
+    cls.add_argument(
         "--format", choices=("tsv", "csv", "json"), default="tsv",
-        help="tsv (default) / csv: the nine columns "
-             "%s; json: one JSON object per line "
-             "with every field, including the attributable in rad and rad/day, "
-             "both Lambdas, the fit residual RMS and the obscode provenance."
-             % ", ".join(OUTPUT_COLUMNS),
+        help="output format: tsv (default) or csv with the columns %s; json "
+             "with every field, one object per line." % ", ".join(OUTPUT_COLUMNS),
     )
-    g.add_argument(
+    cls.add_argument(
         "-o", "--output", metavar="PATH", default=None,
-        help="write rows here instead of stdout.",
+        help="write the rows to PATH instead of stdout.",
     )
-    g.add_argument(
+    cls.add_argument(
         "-q", "--quiet", action="store_true",
-        help="suppress the stderr summary line (per-row failure notes and "
-             "warnings are still reported).",
+        help="do not print the summary line on stderr.",
+    )
+    cls.add_argument(
+        "--model", metavar="PATH", default=None,
+        help=f"the population model file. Default: ${MODEL_ENV_VAR} if set, "
+             f"else {default_model_path()} (see `pneo fetch`).",
+    )
+    cls.add_argument(
+        "--variant", choices=D2_VARIANTS, default="All",
+        help="All (default): the full modeled population; Unk: without the "
+             "objects already in the MPC catalog.",
+    )
+    cls.add_argument(
+        "--obscodes", metavar="PATH", default=None,
+        help="a local copy of the MPC list of observatory codes, for stations "
+             f"outside the built-in table. Default: ${OBSCODE_ENV_VAR} if set, "
+             f"else {default_obscodes_path()} (see `pneo fetch`). Never "
+             "downloaded during a run; an unknown code falls back to the "
+             "center of the Earth with a warning.",
+    )
+    cls.add_argument(
+        "--workers", type=_positive_int, default=os.cpu_count() or 1,
+        metavar="N",
+        help="parallelism (default: all %d cores): threads for the compiled "
+             "kernel, processes for the numpy reference. 1 runs in-process."
+             % (os.cpu_count() or 1),
     )
 
-    g = score.add_argument_group("population model")
+    g = cls.add_argument_group("advanced options")
     g.add_argument(
-        "--model", metavar="PATH", default=None,
-        help=f"digest2 population model CSV. Default: ${MODEL_ENV_VAR} if set, "
-             f"else {default_model_path()}. Get it with `pneo fetch-model`.",
-    )
-    g.add_argument(
-        "--variant", choices=D2_VARIANTS, default="All",
-        help="model variant: All = the total population (default, and what "
-             "D-18 measured as the better NEOCP prior); Unk = the "
-             "'yet undiscovered' tables, whose known-object catalogue is "
-             "frozen at 2011.",
+        "--backend", choices=("auto", "python", "rust"), default="auto",
+        help="auto (default) uses the compiled kernel when it is installed; "
+             "PNEO_BACKEND overrides this flag.",
     )
     g.add_argument(
         "--h-extend-to", type=_h_extend_to, default=30.0, metavar="MAG",
-        help="upper edge of the synthetic faint-end H bin [25.5, MAG) [D-19]. "
-             "Default 30 -- the validated reach, and the operational "
-             "configuration. Pass 'none' for the unextended D-4 support, at "
-             "which point close fast NEOs whose whole admissible region is "
-             "fainter than H = 25.5 score 0/0.",
+        help="extend the model's faintest bin (H 24-25.5) to this absolute "
+             "magnitude (default 30), so very small nearby objects can be "
+             "scored; 'none' disables it.",
     )
     g.add_argument(
         "--h-interpolation", choices=H_INTERPOLATIONS, default="none",
-        help="faint-end reconstruction in H: none (default; digest2's own "
-             "piecewise-constant rule) or pchip (monotone-cubic, "
-             "mass-conserving).",
+        help="faint-end reconstruction: none (default, the model's "
+             "piecewise-constant bins) or pchip (smooth, count-conserving).",
     )
-
-    g = score.add_argument_group("ranging grid")
     g.add_argument(
         "--n-rho", type=_positive_int, default=N_RHO_DEFAULT, metavar="N",
-        help=f"quadrature columns in rho (default {N_RHO_DEFAULT}).",
+        help=f"grid points in distance (default {N_RHO_DEFAULT}).",
     )
     g.add_argument(
         "--n-rhodot", type=_positive_int, default=N_RHODOT_DEFAULT,
         metavar="N",
-        help=f"quadrature rows in rho-dot (default {N_RHODOT_DEFAULT}). The "
-             "default grid is deliberately lopsided: H(V, rho) makes every "
-             "H-bin edge a rho-aligned discontinuity, so essentially all the "
-             "quadrature error lives in rho.",
+        help=f"grid points in range-rate (default {N_RHODOT_DEFAULT}).",
     )
     g.add_argument(
         "--rho-min", type=float, default=0.01, metavar="AU",
-        help="inner edge of the integration domain in topocentric range "
-             "(default 0.01 AU).",
+        help="smallest distance considered (default 0.01 AU).",
     )
     g.add_argument(
         "--rho-max", type=float, default=100.0, metavar="AU",
-        help="outer edge of the integration domain (default 100 AU).",
+        help="largest distance considered (default 100 AU).",
     )
     g.add_argument(
         "-G", type=float, default=G_SLOPE_DEFAULT, dest="g_slope",
         metavar="G",
-        help=f"slope parameter of the IAU H,G phase function (default "
-             f"{G_SLOPE_DEFAULT}) [D-5].",
+        help=f"slope parameter of the H,G phase function (default "
+             f"{G_SLOPE_DEFAULT}).",
     )
-
-    g = score.add_argument_group("ingestion")
     g.add_argument(
         "--obs-format", choices=FORMATS, default="auto",
-        help="force the input format instead of detecting it from content.",
+        help="force the input format instead of detecting it.",
     )
     g.add_argument(
         "--max-arc-hours", type=float, default=DEFAULT_MAX_ARC_HOURS,
         metavar="H",
-        help=f"a night longer than this is truncated to the detections inside "
-             f"its first H hours (default {DEFAULT_MAX_ARC_HOURS:g}); the "
-             "attributable is a first-order motion model and a long arc is not "
-             "linear. If the first TWO detections already span more than H, "
-             "both are kept anyway and the arc exceeds H -- a one-detection "
-             "tracklet cannot be fitted, so the limit yields rather than "
-             "destroy the tracklet. The json output flags every cut row with "
-             "truncated_arc.",
+        help=f"cut a night longer than H hours to its first H hours (default "
+             f"{DEFAULT_MAX_ARC_HOURS:g}); the fit assumes linear motion.",
     )
     g.add_argument(
         "--night-gap-hours", type=float, default=DEFAULT_NIGHT_GAP_HOURS,
         metavar="H",
-        help=f"any gap longer than this splits a night (default "
-             f"{DEFAULT_NIGHT_GAP_HOURS:g}). The tracklet used is the earliest "
-             "same-night, same-station set with at least two detections.",
-    )
-    g.add_argument(
-        "--obscodes", metavar="PATH", default=None,
-        help="local copy of the MPC 'List Of Observatory Codes' page, for "
-             f"stations outside the built-in 14-code table. Default: "
-             f"${OBSCODE_ENV_VAR} if set, else {default_obscodes_path()}. Get one "
-             "with `pneo fetch-obscodes`. NEVER fetched during a scoring "
-             "run; an unknown code falls back to the GEOCENTRE with a warning, "
-             "which is worth up to 0.17 in p_neo at a survey station, so "
-             "check the run summary.",
-    )
-
-    g = score.add_argument_group("execution")
-    g.add_argument(
-        "--backend", choices=("auto", "python", "rust"), default="auto",
-        help="auto (default) uses the compiled kernel when it is importable "
-             "and the numpy reference otherwise; PNEO_BACKEND overrides "
-             "this flag.",
-    )
-    g.add_argument(
-        "--workers", type=_positive_int, default=os.cpu_count() or 1,
-        metavar="N",
-        help="parallelism, default ALL cores (%d here). What N means depends "
-             "on the resolved backend: on 'rust' it becomes "
-             "classify_many(n_threads=N) -- ONE batched call whose rayon pool "
-             "spreads tracklets over N threads with the GIL released; on "
-             "'python' it becomes a multiprocessing pool of N processes over "
-             "tracklets, each loading the population model once in its "
-             "initializer. N = 1 means no pool, in-process."
-             % (os.cpu_count() or 1),
+        help=f"a gap longer than H hours splits a night (default "
+             f"{DEFAULT_NIGHT_GAP_HOURS:g}).",
     )
 
     fetch = sub.add_parser(
-        "fetch-model",
-        help="download the MPC digest2 population model into the user cache",
+        "fetch",
+        help="download the population model and the MPC observatory codes",
         description=(
-            "Thin wrapper around `pneo-fetch-model`: downloads "
-            "digest2.model.csv (~4 MB) from the MPC's public repository, "
-            "verifies its header and checksum, and writes it where "
-            "`pneo score` looks for it."
-        ),
-    )
-    fetch.add_argument(
-        "--out", metavar="PATH", default=None,
-        help=f"destination path (default: {default_model_path()}).",
-    )
-
-    obs = sub.add_parser(
-        "fetch-obscodes",
-        help="download the MPC observatory-code table into the user cache",
-        description=(
-            "Download the MPC 'List Of Observatory Codes' page, which\n"
-            "`pneo score` reads to place any station outside the built-in\n"
-            "14-code table.\n"
-            "\n"
-            "There is no checksum pin: the page is live, gains sites and\n"
-            "revises parallax constants, so a mismatch would be the normal\n"
-            "case. Instead the download is PARSED before anything is written --\n"
-            "a captive-portal page or a truncated transfer cannot replace a\n"
-            "good local table -- and the write is atomic.\n"
-            "\n"
-            "Scoring never fetches this itself: an obscode lookup must not be\n"
-            "able to stall or fail a run, and a result should not depend on\n"
-            "what the network did that day."
+            "Download the MPC digest2 population model (~4 MB) and the MPC\n"
+            "list of observatory codes into the per-user cache, where\n"
+            "`pneo classify` finds them. Set $PNEO_CACHE_DIR to use another\n"
+            "directory. Each download is checked before it is written."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    obs.add_argument(
-        "--out", metavar="PATH", default=None,
-        help=f"destination path (default: {default_obscodes_path()}, which is "
-             "where `pneo score` looks first).",
-    )
+    which = fetch.add_mutually_exclusive_group()
+    which.add_argument("--model-only", action="store_true",
+                       help="download only the population model.")
+    which.add_argument("--obscodes-only", action="store_true",
+                       help="download only the observatory codes.")
     return parser
 
 
+def _cmd_fetch(args) -> int:
+    from ._fetch_model import fetch as fetch_model
+
+    try:
+        if not args.obscodes_only:
+            fetch_model()
+        if not args.model_only:
+            path, n_codes = fetch_obscodes()
+            print(f"wrote {path} ({n_codes} observatory codes with parallax "
+                  "constants)", file=sys.stderr)
+    except (RuntimeError, OSError) as exc:  # a clean CLI error, no traceback
+        print(f"pneo: error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 # --------------------------------------------------------------------------
-# The score command
+# The classify command
 # --------------------------------------------------------------------------
 
 
-def _cmd_score(args, out_stream=None, err=None) -> int:
+def _cmd_classify(args, out_stream=None, err=None) -> int:
     err = err if err is not None else sys.stderr
 
     def note(msg: str) -> None:
@@ -1210,7 +1125,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
 
     # -- report --------------------------------------------------------------
     n_ok = sum(1 for r in rows if r["status"] == "ok")
-    n_policy = sum(1 for r in rows if r["policy_assigned"])
+    n_policy = sum(1 for r in rows if r["status"] == "beyond_model")
     n_scored = sum(1 for r in rows if r["status"] in SCORED_STATUSES)
     n_undefined = sum(
         1 for r in rows
@@ -1257,7 +1172,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
             f"{shown}. That displaces the observer by up to one Earth radius "
             "and is worth up to 0.17 in p_neo at a survey station -- enough to "
             "change a triage decision. Fix it with:\n"
-            "    pneo fetch-obscodes        # writes it to the user cache\n"
+            "    pneo fetch                 # downloads it to the user cache\n"
             "  then re-run (or pass --obscodes PATH)."
         )
 
@@ -1275,7 +1190,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
     if not args.quiet:
         obsc = table.loaded_from
         note(
-            "pneo: {ok} ok, {policy} policy-assigned, {undef} undefined, "
+            "pneo: {ok} ok, {policy} beyond the model, {undef} undefined, "
             "{failed} not classified, of {n} object(s) | model={model} "
             "variant={variant} h_extend_to={hx} h_interpolation={hi} "
             "grid={nr}x{nd} backend={be} workers={w} obscodes={obsc}".format(
@@ -1317,32 +1232,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help(sys.stderr)
         return 2
 
-    if args.command == "fetch-model":
-        from . import _fetch_model as fetch_model
-
-        forwarded = [] if args.out is None else ["--out", str(args.out)]
-        return int(fetch_model.main(forwarded))
-
-    if args.command == "fetch-obscodes":
-        dest = args.out or str(default_obscodes_path())
-        try:
-            path, n_codes = fetch_obscodes(dest)
-        except (RuntimeError, OSError) as exc:  # a clean CLI error, no traceback
-            print(f"pneo: error: {exc}", file=sys.stderr)
-            return 1
-        print(
-            f"wrote {path} ({n_codes} observatory codes with parallax "
-            "constants)",
-            file=sys.stderr,
-        )
-        return 0
+    if args.command == "fetch":
+        return _cmd_fetch(args)
 
     try:
-        return _cmd_score(args)
+        return _cmd_classify(args)
     except ConfigError as exc:
         print(f"pneo: error: {exc}", file=sys.stderr)
         return 2
-    except BrokenPipeError:  # `pneo score ... | head`
+    except BrokenPipeError:  # `pneo classify ... | head`
         # Python would otherwise print "Exception ignored" at shutdown when it
         # flushes a closed stdout.  Redirect the fd and exit quietly, which is
         # what a well-behaved filter does.

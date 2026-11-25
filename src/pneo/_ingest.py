@@ -319,7 +319,7 @@ def fetch_obscodes(dest: str | None = None, timeout: float = 120.0
 
     **This is the only function in this module that touches the network, and
     nothing in the ingestion path calls it.**  It exists so that fetching the
-    table is an explicit, dated act by the user (``pneo fetch-obscodes``)
+    table is an explicit, dated act by the user (``pneo fetch``)
     rather than something a scoring run can be surprised by; see
     :class:`ObscodeTable` for why an obscode lookup must never be able to stall
     or fail a run.
@@ -420,7 +420,7 @@ class ObscodeTable:
         a local copy of the MPC "List Of Observatory Codes" page: the ``path``
         argument, else the first of ``$PNEO_OBSCODES`` and the per-user cache
         copy (:func:`pneo.paths.default_obscodes_path`, written by
-        ``pneo fetch-obscodes``) that exists *and* yields codes.  The MPC
+        ``pneo fetch``) that exists *and* yields codes.  The MPC
         publishes the table as an HTML page; the parser strips tags, so a
         plain-text save of it parses too.  Loaded lazily, once.  ``path``
         suppresses the search entirely, so an explicit table that cannot be
@@ -438,7 +438,7 @@ class ObscodeTable:
 
     **The network is never touched.**  Downloading an obscode table in the
     middle of a scoring run would make results depend on connectivity; use
-    ``pneo score --obscodes PATH`` (or the environment variable) to point
+    ``pneo classify --obscodes PATH`` (or the environment variable) to point
     at a copy fetched deliberately, out of band.
     """
 

@@ -1,9 +1,9 @@
-"""Fetch the MPC digest2 population model (installed console script).
+"""Download the MPC digest2 population model.
 
-``pneo-fetch-model [--out PATH]`` downloads ``digest2.model.csv`` from the
-MPC's public repository (Git LFS media endpoint), verifies its format and
+:func:`fetch` (used by ``pneo fetch`` and :func:`pneo.fetch`) downloads
+``digest2.model.csv`` from the MPC's public repository (Git LFS media endpoint), verifies its format and
 checksum, and writes it to the per-user cache directory (see
-:mod:`pneo.paths`), where ``pneo score`` finds it.
+:mod:`pneo.paths`), where ``pneo classify`` finds it.
 
 The mpc-public repository carries no LICENSE file (checked 2026-08-31); the
 model is downloaded at use time and never redistributed with pneo.
@@ -11,7 +11,6 @@ model is downloaded at use time and never redistributed with pneo.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import sys
 import urllib.request
@@ -54,24 +53,3 @@ def fetch(dest: Path | None = None, timeout: float = 120.0) -> Path:
     dest.write_bytes(data)
     print(f"wrote {dest} ({len(data)} bytes, sha256 {sha[:12]}...)")
     return dest
-
-
-def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument(
-        "--out",
-        type=Path,
-        default=None,
-        help=f"destination path (default: {default_model_path()})",
-    )
-    args = p.parse_args(argv)
-    try:
-        fetch(args.out)
-    except Exception as exc:  # clean CLI error, not a traceback
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

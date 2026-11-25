@@ -1,8 +1,8 @@
 """Where pneo keeps the data files it downloads.
 
 pneo fetches two inputs at the user's request and never ships them:
-the MPC digest2 population model (``pneo fetch-model``) and the MPC
-observatory-code table (``pneo fetch-obscodes``).  Both are written to, and
+the MPC digest2 population model (``pneo fetch``) and the MPC
+observatory-code table (``pneo fetch``).  Both are written to, and
 looked up in, a per-user cache directory, so an installed pneo finds them
 no matter what the current working directory is.
 
@@ -59,10 +59,10 @@ def cache_dir() -> Path:
 
 
 def default_model_path() -> Path:
-    """Where ``pneo fetch-model`` writes the model and ``pneo score`` finds it."""
+    """Where ``pneo fetch`` writes the model and ``pneo classify`` finds it."""
     return cache_dir() / MODEL_FILENAME
 
 
 def default_obscodes_path() -> Path:
-    """Where ``pneo fetch-obscodes`` writes the observatory-code table."""
+    """Where ``pneo fetch`` writes the observatory-code table."""
     return cache_dir() / OBSCODES_FILENAME

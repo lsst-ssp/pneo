@@ -166,8 +166,8 @@ def obsfile(tmp_path_factory, geometry):
 
 
 def _score(capsys, obsfile, *extra, expect=0):
-    """Run ``pneo score`` in process; return (rows, stdout, stderr)."""
-    code = cli.main(["score", obsfile, "--model", _require_model(), *extra])
+    """Run ``pneo classify`` in process; return (rows, stdout, stderr)."""
+    code = cli.main(["classify", obsfile, "--model", _require_model(), *extra])
     out, err = capsys.readouterr()
     assert code == expect, f"exit {code} != {expect}\nstderr:\n{err}"
     return out, err
@@ -198,7 +198,7 @@ def test_score_tsv_end_to_end(capsys, obsfile):
     assert 0.0 <= float(neo["p_neo"]) <= 1.0
     assert neo["obscode"] == "X05" and neo["n_obs"] == "4"
     assert neo["epoch"] == "2026-03-15T06:00:00.000Z"
-    assert float(neo["arc_h"]) == pytest.approx(0.75, abs=1e-3)
+    assert float(neo["arc_hours"]) == pytest.approx(0.75, abs=1e-3)
 
     # The D-19 triage policy, visible in the status column.
     assert wall["status"] == "beyond_model"
@@ -207,11 +207,11 @@ def test_score_tsv_end_to_end(capsys, obsfile):
 
     assert slow["status"] == "ok" and slow["obscode"] == "F51"
     # r -> V: the file carries the reported r magnitude, the row carries V.
-    assert float(slow["V"]) == pytest.approx(20.25, abs=0.01)
+    assert float(slow["mag_v"]) == pytest.approx(20.25, abs=0.01)
 
     # The ingestion failure: a row, with empty numbers and a naming status.
     assert lone["status"] == "single_detection"
-    assert (lone["p_neo"], lone["log_lr"], lone["epoch"], lone["V"]) == (
+    assert (lone["p_neo"], lone["log_lr"], lone["epoch"], lone["mag_v"]) == (
         "", "", "", ""
     )
     assert lone["n_obs"] == "1", "detections seen for the object"
@@ -221,10 +221,10 @@ def test_stdout_is_data_and_stderr_is_everything_else(capsys, obsfile):
     out, err = _score(capsys, obsfile, "--workers", "2", *FAST)
     assert "warning" not in out.lower()
     assert "note" not in out.lower()
-    assert "TRIAGE POLICY" in err, "the policy must be explained once, on stderr"
+    assert "assigned by rule" in err, "the rule must be explained once, on stderr"
     assert "single_detection" in err
     assert "pneo:" in err, "the summary line"
-    assert err.count("TRIAGE POLICY") == 1, "explained once per status, not per row"
+    assert err.count("assigned by rule") == 1, "explained once per status, not per row"
 
 
 def test_quiet_suppresses_only_the_summary(capsys, obsfile):
@@ -267,19 +267,18 @@ def test_json_format_is_strict_and_single_schema(capsys, obsfile):
 
     rows = [json.loads(line, parse_constant=reject) for line in lines]
     for row in rows:
-        assert tuple(row) == cli._ROW_FIELDS, "one schema for every line"
+        assert tuple(row) == tuple(f for f in cli._ROW_FIELDS
+                                   if f not in cli._INTERNAL_FIELDS), \
+            "one schema for every line"
 
     neo, wall, slow, lone = rows
     assert wall["status"] == "beyond_model"
-    assert wall["policy_assigned"] is True
     assert wall["p_neo"] == 1.0
     assert wall["log_lr"] is None, "nan is emitted as JSON null"
     assert wall["lambda_neo"] == 0.0 and wall["lambda_other"] == 0.0
-    assert neo["policy_assigned"] is False
-    assert neo["n_nodes"] > 0
     assert neo["obscode_source"] == "builtin"
     assert neo["bands"] == ["V"] and slow["bands"] == ["r"]
-    assert neo["ra"] == pytest.approx(2.90, abs=1e-6), "radians, at the epoch"
+    assert neo["ra"] == pytest.approx(np.degrees(2.90), abs=1e-4), "degrees, at the epoch"
     assert lone["p_neo"] is None and "single_detection" in lone["status"]
     assert "no two within" in lone["message"]
 
@@ -374,7 +373,7 @@ def test_the_two_backends_agree(capsys, obsfile, monkeypatch):
 
 def test_workers_must_be_positive(capsys, obsfile):
     with pytest.raises(SystemExit) as exc:
-        cli.main(["score", obsfile, "--workers", "0"])
+        cli.main(["classify", obsfile, "--workers", "0"])
     assert exc.value.code == 2
 
 
@@ -399,15 +398,15 @@ def test_exit_2_when_no_model_can_be_found(tmp_path, monkeypatch, capsys,
                                            obsfile):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(cli.MODEL_ENV_VAR, raising=False)
-    assert cli.main(["score", obsfile, "--workers", "1"]) == 2
+    assert cli.main(["classify", obsfile, "--workers", "1"]) == 2
     _out, err = capsys.readouterr()
-    assert "fetch-model" in err, "the error must name the fix"
+    assert "pneo fetch" in err, "the error must name the fix"
     assert "pneo: error:" in err
 
 
 def test_exit_2_when_an_explicit_model_is_missing(tmp_path, capsys, obsfile):
     assert cli.main(
-        ["score", obsfile, "--model", str(tmp_path / "nope.csv")]
+        ["classify", obsfile, "--model", str(tmp_path / "nope.csv")]
     ) == 2
     _out, err = capsys.readouterr()
     assert "--model" in err and "nope.csv" in err
@@ -417,7 +416,7 @@ def test_exit_2_when_an_explicit_obscode_table_is_missing(tmp_path, capsys,
                                                           obsfile):
     """A named obscode file that cannot be read must not degrade silently."""
     assert cli.main(
-        ["score", obsfile, "--model", _require_model(),
+        ["classify", obsfile, "--model", _require_model(),
          "--obscodes", str(tmp_path / "nope.html")]
     ) == 2
     _out, err = capsys.readouterr()
@@ -445,7 +444,7 @@ def test_resolve_model_order(tmp_path, monkeypatch):
     monkeypatch.delenv(cli.MODEL_ENV_VAR)
     assert cli.resolve_model(None) == str(cache), "then the user cache"
     cache.unlink()
-    with pytest.raises(cli.ConfigError, match="fetch-model"):
+    with pytest.raises(cli.ConfigError, match="pneo fetch"):
         cli.resolve_model(None)
 
 
@@ -462,7 +461,7 @@ def test_resolve_model_refuses_to_fall_through_from_a_named_path(monkeypatch,
 
 def test_model_env_var_is_used_by_score(capsys, obsfile, monkeypatch):
     monkeypatch.setenv(cli.MODEL_ENV_VAR, _require_model())
-    code = cli.main(["score", obsfile, "--workers", "2", *FAST])
+    code = cli.main(["classify", obsfile, "--workers", "2", *FAST])
     out, err = capsys.readouterr()
     assert code == 0
     assert f"model={_require_model()}" in err
@@ -494,7 +493,7 @@ def test_h_extend_to_none_changes_the_faint_end(capsys, obsfile):
 
 def test_h_extend_to_rejects_a_bad_value(obsfile):
     with pytest.raises(SystemExit) as exc:
-        cli.main(["score", obsfile, "--h-extend-to", "wat"])
+        cli.main(["classify", obsfile, "--h-extend-to", "wat"])
     assert exc.value.code == 2
 
 
@@ -515,7 +514,7 @@ def test_h_extend_to_below_the_support_end_is_a_clean_error(
     """
     monkeypatch.delenv("PNEO_BACKEND", raising=False)
     assert cli.main(
-        ["score", obsfile, "--model", _require_model(), "--h-extend-to", "10",
+        ["classify", obsfile, "--model", _require_model(), "--h-extend-to", "10",
          "--backend", backend, "--workers", workers]
     ) == 2
     out, err = capsys.readouterr()
@@ -534,10 +533,10 @@ def test_bad_knobs_are_rejected_even_when_nothing_ingested(capsys, tmp_path,
     empty = _write_psv(tmp_path / "lonely.psv", [
         ("A", geometry["neo"], 1, 0.0, "V", "X05"),   # ingests to nothing
     ])
-    assert cli.main(["score", empty, "--model", _require_model(),
+    assert cli.main(["classify", empty, "--model", _require_model(),
                      "--workers", "1", *FAST]) == 1, "valid config, no data"
     capsys.readouterr()
-    assert cli.main(["score", empty, "--model", _require_model(),
+    assert cli.main(["classify", empty, "--model", _require_model(),
                      "--h-extend-to", "10", "--workers", "1", *FAST]) == 2
     _out, err = capsys.readouterr()
     assert "h_extend_to" in err
@@ -556,7 +555,7 @@ def test_bad_knobs_are_rejected_even_when_nothing_ingested(capsys, tmp_path,
 )
 def test_out_of_range_knobs_exit_2_with_a_named_reason(capsys, obsfile, flag,
                                                        value, fragment):
-    assert cli.main(["score", obsfile, "--model", _require_model(),
+    assert cli.main(["classify", obsfile, "--model", _require_model(),
                      "--workers", "1", flag, value]) == 2
     out, err = capsys.readouterr()
     assert fragment in err, err
@@ -586,7 +585,7 @@ def test_output_is_opened_before_scoring(capsys, obsfile, tmp_path,
         return real(*a, **kw)
 
     monkeypatch.setattr(cli, "_score_tracklets", spy)
-    assert cli.main(["score", obsfile, "--model", _require_model(),
+    assert cli.main(["classify", obsfile, "--model", _require_model(),
                      "-o", str(tmp_path / "nodir" / "x.tsv"),
                      "--workers", "1", *FAST]) == 2
     _out, err = capsys.readouterr()
@@ -599,7 +598,7 @@ def test_output_is_truncated_up_front_like_a_shell_redirect(capsys, obsfile,
     """A run that dies must leave -o empty, not holding a stale previous run."""
     dest = tmp_path / "scores.tsv"
     dest.write_text("STALE RESULTS FROM AN EARLIER RUN\n")
-    assert cli.main(["score", obsfile, "--model", _require_model(),
+    assert cli.main(["classify", obsfile, "--model", _require_model(),
                      "-o", str(dest), "--h-extend-to", "10",
                      "--workers", "1", *FAST]) == 2
     capsys.readouterr()
@@ -633,7 +632,7 @@ def test_an_unreadable_model_file_is_a_clean_error(capsys, obsfile, tmp_path):
     junk = tmp_path / "junk.csv"
     junk.write_text("this,is,not,a,population,model\n1,2,3,4,5,6\n")
     assert cli.main(
-        ["score", obsfile, "--model", str(junk), "--workers", "4",
+        ["classify", obsfile, "--model", str(junk), "--workers", "4",
          "--backend", "python", *FAST]
     ) == 2
     _out, err = capsys.readouterr()
@@ -714,7 +713,7 @@ def test_mpc80_input_is_detected_and_scored(capsys, tmp_path, geometry):
     assert row["object_id"] == "K26A00A"
     assert row["obscode"] == "703"
     assert row["status"] == "ok"
-    assert float(row["V"]) == pytest.approx(o["v_mag"], abs=0.02)
+    assert float(row["mag_v"]) == pytest.approx(o["v_mag"], abs=0.02)
 
 
 def test_two_files_of_different_formats_in_one_run(capsys, tmp_path, geometry,
@@ -730,7 +729,7 @@ def test_two_files_of_different_formats_in_one_run(capsys, tmp_path, geometry,
     ]
     obs = tmp_path / "a.obs"
     obs.write_text("\n".join(lines) + "\n")
-    code = cli.main(["score", str(obs), obsfile, "--model", _require_model(),
+    code = cli.main(["classify", str(obs), obsfile, "--model", _require_model(),
                      "--workers", "2", "-q", *FAST])
     out, err = capsys.readouterr()
     assert code == 0, err
@@ -743,7 +742,7 @@ def test_obs_format_can_be_forced(capsys, obsfile):
                        "ades_psv", *FAST)
     assert len(_tsv(out)) == 4
     # Forcing the wrong format is reported, not crashed on.
-    code = cli.main(["score", obsfile, "--model", _require_model(),
+    code = cli.main(["classify", obsfile, "--model", _require_model(),
                      "--obs-format", "mpc80", "--workers", "1", *FAST])
     out, err = capsys.readouterr()
     assert code == 1, "nothing parses as 80-column, so nothing is scored"
@@ -759,12 +758,12 @@ def test_max_arc_hours_truncates(capsys, tmp_path, geometry):
                        "--format", "json", *FAST)
     row = json.loads(out.strip())
     assert row["truncated_arc"] is True
-    assert row["arc_h"] <= 1.0
+    assert row["arc_hours"] <= 1.0
     assert row["n_detections_seen"] == 6 and row["n_obs"] < 6
 
 
 def test_unreadable_input_is_reported_not_fatal(capsys, tmp_path, obsfile):
-    code = cli.main(["score", str(tmp_path / "nope.psv"), obsfile,
+    code = cli.main(["classify", str(tmp_path / "nope.psv"), obsfile,
                      "--model", _require_model(), "--workers", "2", *FAST])
     out, err = capsys.readouterr()
     assert code == 0, err
@@ -773,7 +772,7 @@ def test_unreadable_input_is_reported_not_fatal(capsys, tmp_path, obsfile):
 
 
 # --------------------------------------------------------------------------
-# Entry point, --version, fetch-model
+# Entry point, --version, fetch
 # --------------------------------------------------------------------------
 
 
@@ -790,30 +789,26 @@ def test_no_command_prints_help_on_stderr(capsys):
     assert cli.main([]) == 2
     out, err = capsys.readouterr()
     assert out == "", "help must not go to stdout; stdout is data"
-    for token in ("score", "fetch-model", "fetch-obscodes"):
+    for token in ("classify", "fetch"):
         assert token in err, token
 
 
 def test_help_is_self_sufficient_for_a_digest2_user(capsys):
     with pytest.raises(SystemExit):
-        cli.main(["score", "--help"])
+        cli.main(["classify", "--help"])
     out, _err = capsys.readouterr()
-    assert "$ pneo score" in out, "one worked example"
-    assert "beyond_model" in out, "the D-19 status is documented"
+    assert "$ pneo classify" in out, "one worked example"
+    assert "beyond_model" in out and "no_support" in out
     assert "exit status" in out
-    assert "NOT a digest2 score" in out, "the score is not a digest2 score"
     for flag in ("--variant", "--h-extend-to", "--h-interpolation", "--n-rho",
                  "--n-rhodot", "--rho-min", "--rho-max", "--backend", "-G",
-                 "--workers", "--model", "--format"):
+                 "--workers", "--model", "--format", "--obscodes"):
         assert flag in out, flag
-    assert "n_threads" in out, "the --workers mapping must be documented"
-    assert "multiprocessing" in out
-    # The truncation rule's edge case must be stated, not left to be discovered.
-    assert "first TWO detections" in out
-    # The one deliberate photometric divergence from digest2 (D-20).
-    assert "BLANK band" in out and "-0.8" in out
+    assert "advanced options" in out
+    # The one deliberate photometric difference from digest2.
+    assert "blank band" in out and "-0.8" in out
     # And the obscode story, since a fallback silently costs accuracy.
-    assert "fetch-obscodes" in out and "GEOCENTRE" in out
+    assert "pneo fetch" in out and "center of the Earth" in out
 
 
 # --------------------------------------------------------------------------
@@ -906,7 +901,7 @@ def test_more_than_ten_percent_geocentric_shouts_and_names_fetch_obscodes(
     assert "WARNING:" in err
     assert "1 of 2 scored tracklets (50%)" in err
     assert "GEOCENTRE" in err and "ZZZ" in err
-    assert "pneo fetch-obscodes" in err
+    assert "pneo fetch" in err
 
 
 def test_all_stations_known_means_no_fallback_alert(capsys, obsfile):
@@ -914,29 +909,38 @@ def test_all_stations_known_means_no_fallback_alert(capsys, obsfile):
     assert "were placed at the GEOCENTRE" not in err
 
 
-def test_fetch_obscodes_subcommand(monkeypatch, tmp_path, capsys):
+def test_fetch_subcommand(monkeypatch, tmp_path, capsys):
     """Wiring, success reporting and clean failure -- without touching the network."""
-    seen = {}
+    from pneo import _fetch_model
 
-    def fake(dest, timeout=120.0):
-        seen["dest"] = dest
-        return str(dest), 2692
+    seen = []
 
-    monkeypatch.setattr(cli, "fetch_obscodes", fake)
-    monkeypatch.setenv("PNEO_CACHE_DIR", str(tmp_path / "cache"))
-    assert cli.main(["fetch-obscodes"]) == 0
+    def fake_obscodes(dest=None, timeout=120.0):
+        seen.append("obscodes")
+        return "ObsCodesF.html", 2692
+
+    def fake_model(dest=None, timeout=120.0):
+        seen.append("model")
+
+    monkeypatch.setattr(cli, "fetch_obscodes", fake_obscodes)
+    monkeypatch.setattr(_fetch_model, "fetch", fake_model)
+    assert cli.main(["fetch"]) == 0
     _out, err = capsys.readouterr()
-    assert seen["dest"] == str(tmp_path / "cache" / "ObsCodesF.html")
+    assert seen == ["model", "obscodes"]
     assert "2692 observatory codes" in err
 
-    assert cli.main(["fetch-obscodes", "--out", str(tmp_path / "x.html")]) == 0
-    assert seen["dest"] == str(tmp_path / "x.html")
+    seen.clear()
+    assert cli.main(["fetch", "--model-only"]) == 0
+    assert seen == ["model"]
+    seen.clear()
+    assert cli.main(["fetch", "--obscodes-only"]) == 0
+    assert seen == ["obscodes"]
 
-    def boom(dest, timeout=120.0):
+    def boom(dest=None, timeout=120.0):
         raise RuntimeError("no route to host")
 
     monkeypatch.setattr(cli, "fetch_obscodes", boom)
-    assert cli.main(["fetch-obscodes"]) == 1
+    assert cli.main(["fetch", "--obscodes-only"]) == 1
     _out, err = capsys.readouterr()
     assert "pneo: error: no route to host" in err
     assert "Traceback" not in err
@@ -969,28 +973,11 @@ def test_fetch_obscodes_writes_nothing_when_the_payload_is_not_the_table(
     assert not (tmp_path / "obs.html.part").exists(), "temp file cleaned up"
 
 
-def test_fetch_model_subcommand_wraps_the_existing_script(monkeypatch):
-    """`pneo fetch-model` must be the same code as `pneo-fetch-model`."""
-    from pneo import _fetch_model as fetch_model
-
-    seen = {}
-
-    def fake_main(argv):
-        seen["argv"] = argv
-        return 7
-
-    monkeypatch.setattr(fetch_model, "main", fake_main)
-    assert cli.main(["fetch-model"]) == 7
-    assert seen["argv"] == []
-    assert cli.main(["fetch-model", "--out", "/tmp/x.csv"]) == 7
-    assert seen["argv"] == ["--out", "/tmp/x.csv"]
-
-
 def test_module_entry_point_in_a_subprocess(obsfile, tmp_path):
     """`python -m pneo.cli` -- the real process, the real exit code."""
     _require_model()
     proc = subprocess.run(
-        [sys.executable, "-m", "pneo.cli", "score", obsfile,
+        [sys.executable, "-m", "pneo.cli", "classify", obsfile,
          "--model", MODEL_PATH, "--workers", "2", "-q", *FAST],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
     )
@@ -1007,6 +994,3 @@ def test_console_script_is_declared_in_pyproject():
     """The `pneo` entry point must be wired, or none of this is reachable."""
     text = open(os.path.join(REPO_ROOT, "pyproject.toml")).read()
     assert 'pneo = "pneo.cli:main"' in text
-    assert 'pneo-fetch-model = "pneo._fetch_model:main"' in text, (
-        "the pre-existing script must keep working"
-    )

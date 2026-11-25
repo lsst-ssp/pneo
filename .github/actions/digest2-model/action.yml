@@ -2,7 +2,7 @@ name: digest2 population model
 description: >
   Put the population model in pneo's per-user cache: restore it from the
   Actions cache keyed on the sha256 pinned in src/pneo/fetch_model.py, or
-  download it with pneo-fetch-model, then verify what we ended up with.
+  download it with pneo fetch, then verify what we ended up with.
   Exports PNEO_CACHE_DIR for the rest of the job, so the tests and the CLI find
   the model there.  Requires pneo to be installed first.
 
@@ -57,7 +57,7 @@ runs:
     - name: Fetch the model (cache miss)
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
-      run: pneo-fetch-model --out "${{ steps.dir.outputs.model }}"
+      run: pneo fetch --model-only   # into $PNEO_CACHE_DIR, set above
 
     - name: Verify the model
       id: verify
