@@ -15,16 +15,16 @@ at full LSST depth.
 
 ```bash
 pip install pneo            # CPython >= 3.11
-pneo fetch-model            # download the MPC population model (~4 MB), once
-pneo fetch-obscodes         # download the MPC observatory-code table, once
+pneo fetch-model            # once: download the MPC population model (~4 MB)
+pneo fetch-obscodes         # once: download the MPC observatory-code table
 ```
+
+Both are stored in a per-user cache; see
+[docs/cli.md](https://github.com/lsst-ssp/pneo/blob/main/docs/cli.md#downloaded-files)
+to change where.
 
 Add the `plot` extra (`pip install 'pneo[plot]'`) for the diagnostic plots, which need
 matplotlib.
-
-The two downloads go to a per-user cache directory: `~/.cache/pneo` on Linux and macOS
-(or `$XDG_CACHE_HOME/pneo`) and `%LOCALAPPDATA%\pneo\Cache` on Windows. Set
-`$PNEO_CACHE_DIR` to use another directory.
 
 Wheels for Linux (x86_64), macOS (Apple silicon) and Windows (x64) include a compiled
 Rust kernel. On other platforms `pip` installs a pure-Python version that gives the same
