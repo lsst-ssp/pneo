@@ -20,6 +20,10 @@
 #   * rust/target/ and any compiled extension -- build products.
 # The release workflow asserts each of those absences on the built sdist rather
 # than trusting these rules.
+#
+# The explicit prunes below matter: setuptools-scm adds every git-tracked file
+# to the sdist, so anything not wanted must be removed here, not merely left
+# out of the include lines.
 
 recursive-include rust *.rs *.toml *.lock *.sh *.py *.md
 recursive-include tests *.py
@@ -28,3 +32,7 @@ include MANIFEST.in
 
 prune rust/target
 prune data
+prune reproduce
+prune .github
+exclude .gitignore
+exclude DECISIONS.md DESIGN.md IMPLEMENTATION.md POPULATION_MODELS.md RELEASING.md
