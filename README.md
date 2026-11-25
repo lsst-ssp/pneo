@@ -35,8 +35,9 @@ predicted/observed NEO count 1.01 vs digest2's 1.38
 ```python
 from astropy.time import Time
 from pneo import Attributable, Digest2Histogram, classify
+from pneo.paths import default_model_path
 
-neo, other = Digest2Histogram.neo_other_pair("data/digest2.model.csv")  # scripts/fetch_digest2_model.py
+neo, other = Digest2Histogram.neo_other_pair(default_model_path())  # `pneo fetch-model` first
 att = Attributable(ra=2.9, dec=0.1, ra_rate=-0.02, dec_rate=0.005,     # rad, rad/day
                    epoch=Time("2026-03-15T06:00:00"), v_mag=21.0)
 res = classify(att, neo, other)
@@ -48,9 +49,14 @@ res.plot_posterior_map()   # (rho, rho_dot) diagnostic
 
 ```bash
 pip install pneo            # wheels: linux x86_64, macOS arm64, Windows x64 (CPython >= 3.11)
-pneo fetch-model            # the MPC digest2 population model (~4 MB) -> ./data/
-pneo fetch-obscodes         # the MPC observatory-code table -> ./data/
+pneo fetch-model            # the MPC digest2 population model (~4 MB) -> user cache
+pneo fetch-obscodes         # the MPC observatory-code table -> user cache
 ```
+
+Both downloads go to a per-user cache directory: `~/.cache/pneo` on Linux and macOS
+(or `$XDG_CACHE_HOME/pneo`), `%LOCALAPPDATA%\pneo\Cache` on Windows. Set
+`$PNEO_CACHE_DIR` to use a different directory. `pneo score` finds the model there
+from any working directory; `--model PATH` or `$PNEO_MODEL` override it.
 
 Wheels ship the Rust-accelerated kernel (`backend="auto"` uses it automatically). On
 platforms without a wheel, `pip install pneo` builds from the sdist as a pure-Python
@@ -107,7 +113,7 @@ stdout carries nothing but data, so `pneo score obs.psv > scores.tsv` is clean.
 
 **Observatory codes.** Anything outside the built-in 14-code table needs the MPC
 observatory-code page; `pneo fetch-obscodes` downloads it to
-`./data/ObsCodesF.html`, where `pneo score` looks by default (`--obscodes PATH`
+the user cache, where `pneo score` looks by default (`--obscodes PATH`
 or `$PNEO_OBSCODES` to point elsewhere). Scoring itself never touches the
 network. An unknown code falls back to the **geocentre** with a warning, and that
 is not cosmetic: scoring the pilot's 499 real tracklets with and without the table,

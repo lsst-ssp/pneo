@@ -11,8 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from pneo.fetch_model import DEFAULT_DEST, main  # noqa: E402
+from pneo.fetch_model import main  # noqa: E402
+from pneo.paths import MODEL_FILENAME  # noqa: E402
 
 if __name__ == "__main__":
-    dest = Path(__file__).resolve().parent.parent / DEFAULT_DEST
+    dest = Path(__file__).resolve().parent.parent / "data" / MODEL_FILENAME
     sys.exit(main(["--out", str(dest)]))

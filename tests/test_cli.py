@@ -432,17 +432,22 @@ def test_exit_2_when_an_explicit_obscode_table_is_missing(tmp_path, capsys,
 def test_resolve_model_order(tmp_path, monkeypatch):
     flag = tmp_path / "flag.csv"
     env = tmp_path / "env.csv"
+    cache = tmp_path / "cache" / "digest2.model.csv"
     data = tmp_path / "data" / "digest2.model.csv"
+    cache.parent.mkdir()
     data.parent.mkdir()
-    for p in (flag, env, data):
+    for p in (flag, env, cache, data):
         p.write_text("x")
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PNEO_CACHE_DIR", str(cache.parent))
 
     monkeypatch.setenv(cli.MODEL_ENV_VAR, str(env))
     assert cli.resolve_model(str(flag)) == str(flag), "the flag wins"
     assert cli.resolve_model(None) == str(env), "then the environment"
     monkeypatch.delenv(cli.MODEL_ENV_VAR)
-    assert cli.resolve_model(None) == cli.DEFAULT_MODEL_PATH, "then ./data"
+    assert cli.resolve_model(None) == str(cache), "then the user cache"
+    cache.unlink()
+    assert cli.resolve_model(None) == cli.LEGACY_MODEL_PATH, "then ./data"
     data.unlink()
     with pytest.raises(cli.ConfigError, match="fetch-model"):
         cli.resolve_model(None)
@@ -915,8 +920,6 @@ def test_all_stations_known_means_no_fallback_alert(capsys, obsfile):
 
 def test_fetch_obscodes_subcommand(monkeypatch, tmp_path, capsys):
     """Wiring, success reporting and clean failure -- without touching the network."""
-    from pneo import ingest as ing
-
     seen = {}
 
     def fake(dest, timeout=120.0):
@@ -924,9 +927,10 @@ def test_fetch_obscodes_subcommand(monkeypatch, tmp_path, capsys):
         return str(dest), 2692
 
     monkeypatch.setattr(cli, "fetch_obscodes", fake)
+    monkeypatch.setenv("PNEO_CACHE_DIR", str(tmp_path / "cache"))
     assert cli.main(["fetch-obscodes"]) == 0
     _out, err = capsys.readouterr()
-    assert seen["dest"] == ing.DEFAULT_OBSCODES_DEST
+    assert seen["dest"] == str(tmp_path / "cache" / "ObsCodesF.html")
     assert "2692 observatory codes" in err
 
     assert cli.main(["fetch-obscodes", "--out", str(tmp_path / "x.html")]) == 0

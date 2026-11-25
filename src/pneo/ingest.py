@@ -77,6 +77,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .paths import default_obscodes_path
 from .attributable import (
     GEOCENTER_OBSCODES,
     MPC_EARTH_RADIUS_M,
@@ -94,7 +95,6 @@ __all__ = [
     "OBSCODE_ENV_VAR",
     "OBSCODE_SEARCH_PATH",
     "URL_OBSCODES",
-    "DEFAULT_OBSCODES_DEST",
     "Detection",
     "Tracklet",
     "IngestFailure",
@@ -263,8 +263,9 @@ _OBSCODE_RE = re.compile(
 #: Environment variable naming a local MPC obscode table.
 OBSCODE_ENV_VAR = "PNEO_OBSCODES"
 
-#: Relative paths searched (in order) for a local MPC obscode table when
-#: neither ``--obscodes`` nor :data:`OBSCODE_ENV_VAR` is given.  The MPC
+#: Repository-relative paths searched (in order), after the per-user cache
+#: (:func:`pneo.paths.default_obscodes_path`), for a local MPC obscode table
+#: when neither ``--obscodes`` nor :data:`OBSCODE_ENV_VAR` is given.  The MPC
 #: publishes the table as an HTML page (``ObsCodesF.html``); the parser strips
 #: tags, so a plain-text save of the same table parses too.
 OBSCODE_SEARCH_PATH: tuple[str, ...] = (
@@ -324,13 +325,7 @@ def parse_obscodes(path: str) -> dict[str, dict]:
 #: a mismatch would be the normal case, not a warning worth printing.
 URL_OBSCODES = "https://www.minorplanetcenter.net/iau/lists/ObsCodesF.html"
 
-#: Where :func:`fetch_obscodes` writes by default — the first entry of
-#: :data:`OBSCODE_SEARCH_PATH`, so a fetch and a subsequent ``pneo score``
-#: with no flags line up.
-DEFAULT_OBSCODES_DEST = os.path.join("data", "ObsCodesF.html")
-
-
-def fetch_obscodes(dest: str = DEFAULT_OBSCODES_DEST, timeout: float = 120.0
+def fetch_obscodes(dest: str | None = None, timeout: float = 120.0
                    ) -> tuple[str, int]:
     """Download the MPC observatory-code table.  Returns ``(path, n_codes)``.
 
@@ -364,6 +359,8 @@ def fetch_obscodes(dest: str = DEFAULT_OBSCODES_DEST, timeout: float = 120.0
     except (urllib.error.URLError, OSError) as exc:
         raise RuntimeError(f"GET {URL_OBSCODES} failed: {exc}") from None
 
+    if dest is None:
+        dest = default_obscodes_path()
     dest = os.fspath(dest)
     parent = os.path.dirname(os.path.abspath(dest))
     os.makedirs(parent, exist_ok=True)
@@ -473,6 +470,7 @@ class ObscodeTable:
         if env:
             out.append(env)
         if self._search:
+            out.append(str(default_obscodes_path()))
             out.extend(OBSCODE_SEARCH_PATH)
         return out
 

@@ -2,7 +2,8 @@
 
 ``pneo-fetch-model [--out PATH]`` downloads ``digest2.model.csv`` from the
 MPC's public repository (Git LFS media endpoint), verifies its format and
-checksum, and writes it where pneo can use it. This is the installed-wheel
+checksum, and writes it to the per-user cache directory (see
+:mod:`pneo.paths`), where ``pneo score`` finds it. This is the installed-wheel
 counterpart of ``scripts/fetch_digest2_model.py`` (which now delegates here).
 
 The mpc-public repository carries no LICENSE file (checked 2026-08-31); the
@@ -27,11 +28,16 @@ URL = (
 KNOWN_SHA256 = "2b9d9d2a6d8ab16d3a2dbb835b30d3aa172431f27c3cb7c159675d7686668c45"
 EXPECTED_HEADER = "Model,Class,Q,e,i,H6,H8,H10"
 
-DEFAULT_DEST = Path("data") / "digest2.model.csv"
+from .paths import default_model_path
 
 
-def fetch(dest: Path = DEFAULT_DEST, timeout: float = 120.0) -> Path:
-    """Download, verify, and write the model file. Returns the path written."""
+def fetch(dest: Path | None = None, timeout: float = 120.0) -> Path:
+    """Download, verify, and write the model file. Returns the path written.
+
+    ``dest`` defaults to :func:`pneo.paths.default_model_path`.
+    """
+    if dest is None:
+        dest = default_model_path()
     print(f"fetching {URL}")
     data = urllib.request.urlopen(URL, timeout=timeout).read()
     sha = hashlib.sha256(data).hexdigest()
@@ -56,8 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--out",
         type=Path,
-        default=DEFAULT_DEST,
-        help=f"destination path (default: {DEFAULT_DEST})",
+        default=None,
+        help=f"destination path (default: {default_model_path()})",
     )
     args = p.parse_args(argv)
     try:

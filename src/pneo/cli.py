@@ -52,7 +52,6 @@ from .constants import G_SLOPE_DEFAULT
 from .ingest import (
     DEFAULT_MAX_ARC_HOURS,
     DEFAULT_NIGHT_GAP_HOURS,
-    DEFAULT_OBSCODES_DEST,
     FORMATS,
     OBSCODE_ENV_VAR,
     ObscodeTable,
@@ -60,6 +59,7 @@ from .ingest import (
     fetch_obscodes,
     ingest,
 )
+from .paths import default_model_path, default_obscodes_path
 from .population import D2_VARIANTS, H_INTERPOLATIONS
 
 __all__ = ["main", "resolve_model", "OUTPUT_COLUMNS", "MODEL_ENV_VAR"]
@@ -67,8 +67,9 @@ __all__ = ["main", "resolve_model", "OUTPUT_COLUMNS", "MODEL_ENV_VAR"]
 #: Environment variable naming the digest2 population model file.
 MODEL_ENV_VAR = "PNEO_MODEL"
 
-#: Where ``resolve_model`` looks last.
-DEFAULT_MODEL_PATH = os.path.join("data", "digest2.model.csv")
+#: Where ``resolve_model`` looks last: the repository-relative location a
+#: source checkout populates with ``scripts/fetch_digest2_model.py``.
+LEGACY_MODEL_PATH = os.path.join("data", "digest2.model.csv")
 
 #: The default (TSV/CSV) output columns, in order.  Names are
 #: machine-friendly — no spaces, no units in the header — because these files
@@ -162,10 +163,12 @@ class ConfigError(Exception):
 
 
 def resolve_model(flag: str | None = None) -> str:
-    """Locate the digest2 population model: flag, then env, then ``./data``.
+    """Locate the digest2 population model.
 
-    Resolution order is ``--model PATH``, then ``$PNEO_MODEL``, then
-    ``./data/digest2.model.csv``.  A path that was named explicitly (by flag or
+    Resolution order is ``--model PATH``, then ``$PNEO_MODEL``, then the
+    per-user cache (:func:`pneo.paths.default_model_path`, where
+    ``pneo fetch-model`` writes it), then ``./data/digest2.model.csv`` (a
+    source checkout).  A path that was named explicitly (by flag or
     environment) and does not exist is an error naming *that* path — silently
     falling through to a different model would make the run unreproducible.
 
@@ -183,12 +186,15 @@ def resolve_model(flag: str | None = None) -> str:
         raise ConfigError(
             f"the population model given by {how} does not exist: {path}"
         )
-    if os.path.exists(DEFAULT_MODEL_PATH):
-        return DEFAULT_MODEL_PATH
+    cached = str(default_model_path())
+    for path in (cached, LEGACY_MODEL_PATH):
+        if os.path.exists(path):
+            return path
     raise ConfigError(
         "no digest2 population model found. Looked at: --model (not given), "
-        f"${MODEL_ENV_VAR} (not set), {DEFAULT_MODEL_PATH} (does not exist).\n"
-        "  Run `pneo fetch-model` to download it (~4 MB) into ./data/, "
+        f"${MODEL_ENV_VAR} (not set), {cached} and {LEGACY_MODEL_PATH} "
+        "(neither exists).\n"
+        f"  Run `pneo fetch-model` to download it (~4 MB) into {cached}, "
         "or pass --model PATH."
     )
 
@@ -917,7 +923,8 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument(
         "--model", metavar="PATH", default=None,
         help=f"digest2 population model CSV. Default: ${MODEL_ENV_VAR} if set, "
-             f"else {DEFAULT_MODEL_PATH}. Get it with `pneo fetch-model`.",
+             f"else {default_model_path()}, else {LEGACY_MODEL_PATH}. Get it "
+             "with `pneo fetch-model`.",
     )
     g.add_argument(
         "--variant", choices=D2_VARIANTS, default="All",
@@ -1027,7 +1034,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     fetch = sub.add_parser(
         "fetch-model",
-        help="download the MPC digest2 population model into ./data/",
+        help="download the MPC digest2 population model into the user cache",
         description=(
             "Thin wrapper around `pneo-fetch-model`: downloads "
             "digest2.model.csv (~4 MB) from the MPC's public repository, "
@@ -1037,12 +1044,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fetch.add_argument(
         "--out", metavar="PATH", default=None,
-        help=f"destination path (default: {DEFAULT_MODEL_PATH}).",
+        help=f"destination path (default: {default_model_path()}).",
     )
 
     obs = sub.add_parser(
         "fetch-obscodes",
-        help="download the MPC observatory-code table into ./data/",
+        help="download the MPC observatory-code table into the user cache",
         description=(
             "Download the MPC 'List Of Observatory Codes' page, which\n"
             "`pneo score` reads to place any station outside the built-in\n"
@@ -1062,7 +1069,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     obs.add_argument(
         "--out", metavar="PATH", default=None,
-        help=f"destination path (default: {DEFAULT_OBSCODES_DEST}, which is "
+        help=f"destination path (default: {default_obscodes_path()}, which is "
              "where `pneo score` looks first).",
     )
     return parser
@@ -1325,7 +1332,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(fetch_model.main(forwarded))
 
     if args.command == "fetch-obscodes":
-        dest = args.out or DEFAULT_OBSCODES_DEST
+        dest = args.out or str(default_obscodes_path())
         try:
             path, n_codes = fetch_obscodes(dest)
         except (RuntimeError, OSError) as exc:  # a clean CLI error, no traceback
