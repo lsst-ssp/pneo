@@ -94,9 +94,15 @@ def _observer_states(t, n, obscode, observer, obscodes):
         lon, lat, height, source = table.resolve(code)
         site = {} if source in ("geocenter", "fallback") else {
             "lon_deg": lon, "lat_deg": lat, "height_m": height}
-        r, v = observer_state(t[idx], **site)
-        R[idx] = np.reshape(r, (-1, 3))
-        V[idx] = np.reshape(v, (-1, 3))
+        # One ephemeris evaluation per distinct epoch: batches often share
+        # epochs, and the ephemeris dominates the Python-side cost.
+        sub = t[idx]
+        _, first, inverse = np.unique(np.stack([sub.jd1, sub.jd2], axis=-1),
+                                      axis=0, return_index=True,
+                                      return_inverse=True)
+        r, v = observer_state(sub[first], **site)
+        R[idx] = np.reshape(r, (-1, 3))[inverse.ravel()]
+        V[idx] = np.reshape(v, (-1, 3))[inverse.ravel()]
     return R, V
 
 
@@ -116,10 +122,16 @@ def _prepare(ra, dec, ra_rate, dec_rate, epoch, mag, obscode, observer, obscodes
     # Internally the attributable carries the raw d(alpha)/dt in rad/day.
     ra_rate_raw = np.radians(ra_rate) / np.cos(dec_r)
     dec_rate_r = np.radians(dec_rate)
+    # One scalar Time object per distinct epoch, shared by the tracklets that
+    # have it (indexing an astropy Time is slow enough to matter in big batches).
+    _, first, inverse = np.unique(np.stack([t.jd1, t.jd2], axis=-1), axis=0,
+                                  return_index=True, return_inverse=True)
+    epochs = [t[i] for i in first]
+    inverse = inverse.ravel()
     atts = [
         Attributable(ra=float(ra_r[k]), dec=float(dec_r[k]),
                      ra_rate=float(ra_rate_raw[k]), dec_rate=float(dec_rate_r[k]),
-                     epoch=t[k], v_mag=float(mag[k]))
+                     epoch=epochs[inverse[k]], v_mag=float(mag[k]))
         for k in range(n)
     ]
     return atts, R, V, shape
