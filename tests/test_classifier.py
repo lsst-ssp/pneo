@@ -1,6 +1,6 @@
 """WP5 unit tests — the classifier (marginal likelihoods, posterior, maps).
 
-Acceptance criteria (IMPLEMENTATION.md WP5):
+Acceptance criteria (docs/design/IMPLEMENTATION.md WP5):
   1. hand-constructed obvious cases with the real digest2 model score as
      expected (fast opposition tracklet -> P(NEO) ~ 1; slow one -> ~ 0),
   2. results are invariant under grid refinement to a stated tolerance,

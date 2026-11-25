@@ -64,7 +64,7 @@ platforms without a wheel, `pip install pneo` builds from the sdist as a pure-Py
 package — same results via the numpy reference implementation, ~40× slower; build the
 extension later with `rust/build.sh` (needs cargo). From a source checkout:
 `pip install -e ".[dev]" && python scripts/fetch_digest2_model.py`. See
-[RELEASING.md](RELEASING.md) for the release process.
+[docs/RELEASING.md](docs/RELEASING.md) for the release process.
 
 ## Command line
 
@@ -136,7 +136,7 @@ API (`pneo.ingest`).
 
 | Document | Contents |
 |---|---|
-| [DESIGN.md](DESIGN.md) | Goals and scope, full mathematical formalism, architecture, validation plan, roadmap |
-| [IMPLEMENTATION.md](IMPLEMENTATION.md) | v0 execution plan: work packages, agent team schedule, review protocol, acceptance gates |
-| [DECISIONS.md](DECISIONS.md) | Dated log of design decisions with rationale and alternatives |
-| [POPULATION_MODELS.md](POPULATION_MODELS.md) | Survey of available solar-system population models (through 2026-08) and open actions |
+| [DESIGN.md](docs/design/DESIGN.md) | Goals and scope, full mathematical formalism, architecture, validation plan, roadmap |
+| [IMPLEMENTATION.md](docs/design/IMPLEMENTATION.md) | v0 execution plan: work packages, agent team schedule, review protocol, acceptance gates |
+| [DECISIONS.md](docs/design/DECISIONS.md) | Dated log of design decisions with rationale and alternatives |
+| [POPULATION_MODELS.md](docs/design/POPULATION_MODELS.md) | Survey of available solar-system population models (through 2026-08) and open actions |

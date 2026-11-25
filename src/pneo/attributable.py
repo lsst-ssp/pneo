@@ -1,7 +1,7 @@
 """WP1 — Attributable value type and observer heliocentric state.
 
 Frozen contract (WP0). Implementations must preserve every public signature,
-unit, and frame documented here. See DESIGN.md §2.1, IMPLEMENTATION.md §1/WP1.
+unit, and frame documented here. See docs/design/DESIGN.md §2.1, docs/design/IMPLEMENTATION.md §1/WP1.
 """
 
 from __future__ import annotations

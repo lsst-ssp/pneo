@@ -34,4 +34,4 @@ prune rust/target
 prune data
 prune .github
 exclude .gitignore
-exclude DECISIONS.md DESIGN.md IMPLEMENTATION.md POPULATION_MODELS.md RELEASING.md
+prune docs

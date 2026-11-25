@@ -1,6 +1,6 @@
 """WP3 — Admissible region and (rho, rho_dot) integration grids.
 
-Frozen contract (WP0). See DESIGN.md §2.5, IMPLEMENTATION.md WP3.
+Frozen contract (WP0). See docs/design/DESIGN.md §2.5, docs/design/IMPLEMENTATION.md WP3.
 
 Derivation of the bound-orbit condition (DESIGN §2.1 + §2.5)
 ------------------------------------------------------------

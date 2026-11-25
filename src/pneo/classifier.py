@@ -1,6 +1,6 @@
 """WP5 — Marginal likelihoods, posterior, and diagnostics.
 
-Frozen contract (WP0). See DESIGN.md §2.3–2.5, IMPLEMENTATION.md WP5.
+Frozen contract (WP0). See docs/design/DESIGN.md §2.3–2.5, docs/design/IMPLEMENTATION.md WP5.
 
 What this module does
 ---------------------

@@ -1,7 +1,7 @@
 name: Release
 
 # Publishing pneo to PyPI.  Two artifact kinds, built by two tools, for the
-# reasons written down in pyproject.toml and RELEASING.md:
+# reasons written down in pyproject.toml and docs/RELEASING.md:
 #
 #   * one **sdist**, built by setuptools -- the whole source, Rust crate
 #     included, but installing it compiles nothing and yields the numpy
@@ -237,7 +237,7 @@ jobs:
   # the repository keeps setuptools as its build backend (see pyproject.toml).
   #
   # Platform coverage shipped: manylinux2014 x86_64, macOS arm64, Windows x64.
-  # RELEASING.md documents how to add the rest (linux aarch64/musl, macOS
+  # docs/RELEASING.md documents how to add the rest (linux aarch64/musl, macOS
   # x86_64); every entry added here needs nothing but a matrix row.
   # ---------------------------------------------------------------------------
   wheels:
@@ -424,7 +424,7 @@ jobs:
   # Publish.  Trusted Publishing only: the job presents a short-lived OIDC
   # token, so there is no API token anywhere in this repository or its secrets.
   # `id-token: write` is scoped to this job alone, and the `pypi` environment
-  # name is part of what pypi.org matches against -- see RELEASING.md before
+  # name is part of what pypi.org matches against -- see docs/RELEASING.md before
   # renaming either this file or that environment.
   #
   # No publish step runs for workflow_dispatch: a dispatch is a build-and-verify

@@ -1,7 +1,7 @@
 """WP2 — Geometry, photometry, element transforms, and Jacobians.
 
 Frozen contract (WP0). Implementations must preserve every public signature,
-unit, and frame documented here. See DESIGN.md §2.1–2.3, IMPLEMENTATION.md WP2.
+unit, and frame documented here. See docs/design/DESIGN.md §2.1–2.3, docs/design/IMPLEMENTATION.md WP2.
 
 Batching convention: all functions accept either scalars/(3,) vectors or
 batched arrays with a LEADING batch dimension (shape (N,) / (N, 3) / (N, 6));

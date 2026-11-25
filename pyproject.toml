@@ -1,7 +1,7 @@
 # pneo packaging.
 #
 # Two artifacts are published, built by two different tools on purpose (see
-# RELEASING.md):
+# docs/RELEASING.md):
 #
 #   * the **sdist**, built by setuptools (the `[build-system]` backend below).
 #     It carries the Python package *and* the Rust crate sources, but installing
@@ -35,7 +35,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pneo"
 # The version is derived from git by setuptools-scm: a `vX.Y.Z` tag IS the
-# version (and pushing one publishes the release -- see RELEASING.md); between
+# version (and pushing one publishes the release -- see docs/RELEASING.md); between
 # tags, dev installs get `X.Y.(Z+1).devN+g<hash>`.  There is no hand-maintained
 # version string anywhere: `__init__.__version__` reads installed metadata, and
 # rust/Cargo.toml carries no version (publish = false; the crate is an

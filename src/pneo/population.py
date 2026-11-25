@@ -1,6 +1,6 @@
 """WP4 — Population density interface and the digest2 histogram implementation.
 
-Frozen contract (WP0). See DESIGN.md §3, IMPLEMENTATION.md WP4, D-10.
+Frozen contract (WP0). See docs/design/DESIGN.md §3, docs/design/IMPLEMENTATION.md WP4, D-10.
 
 Semantics of the digest2 population model
 -----------------------------------------

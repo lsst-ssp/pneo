@@ -266,7 +266,7 @@ or MC). The public API therefore takes the attributable as a distribution from d
 v0 implements the delta-function case [D-6].
 
 **Measured impact at Rubin precision (2026-09-02,
-[validation/ASTROMETRIC_NOISE.md](validation/ASTROMETRIC_NOISE.md)).** Injecting the
+validation/ASTROMETRIC_NOISE.md, in lsst-ssp/pneo-full).** Injecting the
 Sorcha magnitude-dependent astrometric error model (10–85 mas/coordinate over V = 18–24)
 into both endpoints of the gate catalogue's tracklets at a 45-minute arc and re-scoring
 with the unmodified classifier changes essentially nothing: ĉ 0.923 → 0.925, ΔAUC
@@ -275,7 +275,7 @@ consistent with zero, zero threshold crossings on 2×10⁴, per-tracklet score s
 100.0% of the induced variance, as expected above. **Conclusion: covariance
 marginalization is not urgent for 45-minute Rubin arcs; the binding variable is arc
 length.** The follow-up sweep
-([validation/ASTROMETRIC_NOISE_ARCLENGTH.md](validation/ASTROMETRIC_NOISE_ARCLENGTH.md))
+(validation/ASTROMETRIC_NOISE_ARCLENGTH.md, in lsst-ssp/pneo-full)
 measured where it breaks: **calibration fails at dt = 5 min** (Z_tot = −5.6,
 ĉ = 0.32, contamination 6.3% → 23.8% at the fixed cut — slow movers acquire
 manufactured rate), **10 min is marginal** (1.3× clear of the criterion), and

@@ -1,6 +1,6 @@
 """WP4 unit tests — digest2 population histogram.
 
-Acceptance criteria (IMPLEMENTATION.md WP4):
+Acceptance criteria (docs/design/IMPLEMENTATION.md WP4):
   1. integrated counts reproduce the file totals,
   2. NEO/other partition is exactly complementary at q = 1.3 AU,
   3. sample() histograms converge to the model,
