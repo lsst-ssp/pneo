@@ -285,7 +285,8 @@ Golden A/B against the stored `gate_v0` scores, all 20 000 tracklets
 | `status` | identical | exact |
 | `log_lr` (NaN-aware) | identical NaN/±inf pattern | 1e-5 rel |
 
-Reproduce with `python3 rust/bench.py` and `python3 validation/backend_parity.py`.
+These measurements were made with `rust/bench.py` and `validation/backend_parity.py`,
+which are kept in the archived repository lsst-ssp/pneo-full.
 
 ### Result fields the kernel returns
 
