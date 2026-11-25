@@ -46,7 +46,7 @@ stated here so nobody has to discover them from a diff:
 
 * **A blank band is read as V, not as "unknown"** [D-20].  digest2's own
   80-column reader gives a blank band its -0.8 unknown-band fallback (its ADES
-  reader substitutes V), so pneo's V is 0.80 mag brighter on such a record.
+  reader substitutes V), so pneo's V is 0.80 mag fainter (numerically larger) on such a record.
   See :func:`normalize_band` for the argument; :func:`parse_mpc80` warns once
   per file whenever it happens, and the CLI repeats the count on stderr.
 * **A wider set of observation types is accepted.**  digest2 keeps only
@@ -210,7 +210,7 @@ def normalize_band(band: str | None) -> str:
        reader hands the raw blank straight to the offset table, where it misses
        and takes the **-0.8 "unknown band" fallback**.  pneo applies the
        ADES rule on **both** paths, so on a blank-band 80-column record
-       pneo's V is **0.80 mag brighter** than digest2's.
+       pneo's V is **0.80 mag fainter** (numerically larger) than digest2's.
 
        This is a choice, not an oversight.  A blank band in pre-ADES astrometry
        overwhelmingly means an unfiltered or V-ish visual/CCD magnitude; -0.8 is
@@ -1163,7 +1163,7 @@ def parse_mpc80(
             f"pneo.ingest: {path}: {n_blank_band} MPC 80-column record(s) "
             "carry a magnitude with a BLANK band; pneo converts these as V "
             "(offset 0.0), whereas digest2's own 80-column reader applies its "
-            "-0.8 unknown-band fallback, so pneo's V is 0.80 mag brighter "
+            "-0.8 unknown-band fallback, so pneo's V is 0.80 mag fainter "
             "on those records. This is a deliberate choice [D-20], not a bug: "
             "a blank band in pre-ADES astrometry is an unfiltered/visual "
             "magnitude, and -0.8 is digest2's crudest fallback applied there "

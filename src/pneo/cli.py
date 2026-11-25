@@ -796,7 +796,7 @@ the columns
              DIVERGENCE [D-20]: an MPC 80-column record with a magnitude but a
              BLANK band is converted as V (offset 0.0), where digest2's own
              80-column reader applies its -0.8 unknown-band fallback -- so
-             pneo is 0.80 mag brighter there. A blank band in pre-ADES
+             pneo is 0.80 mag fainter there. A blank band in pre-ADES
              astrometry is an unfiltered/visual magnitude, and -0.8 is
              digest2's crudest fallback, applied only because a different
              parser ran; pneo's ADES and 80-column paths agree with each

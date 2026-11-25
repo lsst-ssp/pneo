@@ -492,7 +492,8 @@ def test_blank_band_80_column_is_read_as_V_and_counted(tmp_path):
     digest2's ADES reader substitutes V for a missing band; its 80-column
     reader hands the raw blank to the offset table, where it misses and takes
     the -0.8 unknown-band fallback.  pneo applies the ADES rule on both
-    paths, so it reads 0.80 mag BRIGHTER on a blank-band 80-column record.
+    paths, so it reads 0.80 mag FAINTER (19.54, not 18.74) on a blank-band
+    80-column record.
     That is a choice, and this test pins both halves of it: the value, and the
     fact that it is announced rather than silent.
     """
