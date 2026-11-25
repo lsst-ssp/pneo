@@ -38,6 +38,7 @@ REQUIRED = (
     "rust/Cargo.toml",
     "rust/Cargo.lock",
     "rust/build.sh",
+    "rust/build.rs",
     "rust/src/lib.rs",
     "rust/src/kernel.rs",
     "scripts/fetch_digest2_model.py",

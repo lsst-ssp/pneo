@@ -671,8 +671,10 @@ fn bin_index<'py>(
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The crate carries no version (publish = false); the package version is
-    // the git tag via setuptools-scm.  Report nothing rather than "0.0.0".
-    m.add("__version__", "(pneo package version; see pneo.__version__)")?;
+    // the git tag via setuptools-scm.  build.rs bakes in the version that the
+    // release workflow stamps into pyproject.toml ("0+unknown" for builds
+    // from a checkout), so a wheel's extension reports its package version.
+    m.add("__version__", env!("PNEO_VERSION"))?;
     m.add("COND_MAX", consts::COND_MAX)?;
     m.add("UnsupportedModel", m.py().get_type::<UnsupportedModel>())?;
     m.add_class::<CoreModel>()?;
