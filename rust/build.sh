@@ -33,13 +33,28 @@ for arg in "$@"; do
     esac
 done
 
+# Platform differences.  On macOS the shared library is a .dylib, and a Python
+# extension must leave the interpreter's symbols unresolved at link time
+# (Python provides them when it loads the module), which needs
+# `-undefined dynamic_lookup`.  maturin passes that flag itself; a plain
+# `cargo build` does not.  Linux needs neither.
+case "$(uname -s)" in
+    Darwin)
+        libname="libpneo_core.dylib"
+        export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-undefined -C link-arg=dynamic_lookup"
+        ;;
+    *)
+        libname="libpneo_core.so"
+        ;;
+esac
+
 if [[ "$profile" == "release" ]]; then
     cargo build --release --manifest-path "$here/Cargo.toml"
 else
     cargo build --manifest-path "$here/Cargo.toml"
 fi
 
-src="$here/target/$profile/libpneo_core.so"
+src="$here/target/$profile/$libname"
 dst="$root/src/pneo/_core.abi3.so"
 # Install by rename, not by overwrite.  `cp` truncates and rewrites the target
 # in place, which corrupts the mapping of any process that already has the old
@@ -47,6 +62,7 @@ dst="$root/src/pneo/_core.abi3.so"
 # directory is an atomic rename: new arrivals get the new inode, existing
 # mappings keep the old one until they exit.
 tmp="$(mktemp "$dst.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT   # no stray temp file if the copy fails
 cp -f "$src" "$tmp"
 chmod 755 "$tmp"
 mv -f "$tmp" "$dst"
