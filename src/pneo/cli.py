@@ -2,7 +2,7 @@
 
 ``pneo score OBSFILE...`` is the counterpart of running ``digest2`` on an
 observation file: it ingests ADES PSV or MPC 80-column astrometry
-(:mod:`pneo.ingest`), classifies one tracklet per object, and writes one
+(:mod:`pneo._ingest`), classifies one tracklet per object, and writes one
 row per tracklet to stdout.
 
 Everything about the pipeline is spelled out in ``--help``; the design
@@ -47,9 +47,9 @@ import warnings
 import numpy as np
 
 from . import __version__
-from .classifier import N_RHO_DEFAULT, N_RHODOT_DEFAULT
-from .constants import G_SLOPE_DEFAULT
-from .ingest import (
+from ._classifier import N_RHO_DEFAULT, N_RHODOT_DEFAULT
+from ._constants import G_SLOPE_DEFAULT
+from ._ingest import (
     DEFAULT_MAX_ARC_HOURS,
     DEFAULT_NIGHT_GAP_HOURS,
     FORMATS,
@@ -116,7 +116,7 @@ _STATUS_NOTES = {
     "nan": "a population component returned NaN; this is a bug, please report it.",
 }
 
-#: Statuses a :class:`~pneo.classifier.ClassificationResult` can carry, i.e.
+#: Statuses a :class:`~pneo._classifier.ClassificationResult` can carry, i.e.
 #: the rows for which the classifier ran to completion.  Everything else in the
 #: status column is an ingestion failure or ``"error"``.
 CLASSIFIER_STATUSES = frozenset(
@@ -252,8 +252,8 @@ def _score_one(task: tuple) -> tuple:
     """
     from astropy.time import Time
 
-    from .attributable import Attributable
-    from .classifier import classify
+    from ._attributable import Attributable
+    from ._classifier import classify
 
     idx, ra, dec, ra_rate, dec_rate, jd, v_mag, obs_kw = task
     cfg = _W["cfg"]
@@ -366,7 +366,7 @@ def _score_tracklets(
         return [], [], which
 
     if which == "rust":
-        from .backend import ModelNotSupported, core_model_for
+        from ._backend import ModelNotSupported, core_model_for
 
         neo, other = pair
         try:
@@ -444,8 +444,8 @@ def _score_rust(
 ) -> tuple[list[tuple], list[str]]:
     from astropy.time import Time
 
-    from .attributable import observer_state
-    from .classifier import classify_many
+    from ._attributable import observer_state
+    from ._classifier import classify_many
 
     neo, other = pair
 
@@ -522,7 +522,7 @@ def _rust_call(neo, other, atts, R, V, cfg, workers):
     Never raises: the caller decides whether a failure means "retry this batch
     one at a time" or "this single tracklet is the bad one".
     """
-    from .classifier import classify_many
+    from ._classifier import classify_many
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -542,7 +542,7 @@ def _rust_call(neo, other, atts, R, V, cfg, workers):
 
 
 def _row_from_result(idx: int, res) -> tuple:
-    """A scored-row tuple from a :class:`~pneo.classifier.ClassificationResult`."""
+    """A scored-row tuple from a :class:`~pneo._classifier.ClassificationResult`."""
     return (
         int(idx), float(res.p_neo), float(res.log_lr), float(res.lambda_neo),
         float(res.lambda_other), int(res.n_nodes), str(res.status), "", [],
@@ -1291,7 +1291,7 @@ def _cmd_score(args, out_stream=None, err=None) -> int:
 
 
 def _resolved_backend(flag: str) -> str:
-    from .backend import resolve_backend
+    from ._backend import resolve_backend
 
     try:
         return resolve_backend(flag)
@@ -1318,7 +1318,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.command == "fetch-model":
-        from . import fetch_model
+        from . import _fetch_model as fetch_model
 
         forwarded = [] if args.out is None else ["--out", str(args.out)]
         return int(fetch_model.main(forwarded))

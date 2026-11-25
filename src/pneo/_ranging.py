@@ -40,9 +40,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .attributable import Attributable
-from .constants import MU_SUN
-from .transforms import tangent_basis
+from ._attributable import Attributable
+from ._constants import MU_SUN
+from ._transforms import tangent_basis
 
 
 def admissible_rhodot_interval(

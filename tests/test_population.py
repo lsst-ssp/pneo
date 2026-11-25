@@ -23,7 +23,7 @@ import os
 import numpy as np
 import pytest
 
-from pneo.constants import Q_NEO
+from pneo._constants import Q_NEO
 from pneo.models.digest2 import (
     BIN_VOLUME,
     D2_CLASSES,

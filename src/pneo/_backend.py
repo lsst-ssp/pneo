@@ -3,10 +3,10 @@
 pneo ships two implementations of the WP5 marginal-likelihood integral:
 
 ``"python"``
-    :func:`pneo.classifier.classify`'s own vectorized numpy pipeline.  It is
+    :func:`pneo._classifier.classify`'s own vectorized numpy pipeline.  It is
     the **reference**: every convention (bin edges, NaN/unbound masking, the
     D-14 clamp, the quadrature measure) is defined by what it does, and the
-    6x6 Jacobian chain in :mod:`pneo.transforms` is built and inverted
+    6x6 Jacobian chain in :mod:`pneo._transforms` is built and inverted
     numerically there.
 
 ``"rust"``
@@ -76,7 +76,7 @@ Sigma points (``att.sigma_points`` / ``att.sigma_weights``, a ``(K, 5)`` matrix
 of ``(ra, dec, ra_rate, dec_rate, v_mag)`` variants and ``(K,)`` weights) are
 implemented **only** by the kernel, which accumulates
 ``Lambda_C = sum_k w_k Lambda_C^(k)`` with a separate admissible region and grid
-per variant.  :func:`pneo.classifier.classify` refuses them on the Python
+per variant.  :func:`pneo._classifier.classify` refuses them on the Python
 path instead of silently scoring the central attributable; see
 :func:`sigma_point_count`.
 """
@@ -295,7 +295,7 @@ def check_component_pair(neo, other) -> None:
     .. warning::
        ``backend="python"`` on a hand-built mismatched pair is **not** guarded
        by this function, because the reference path in
-       :mod:`pneo.classifier` never funnels the component pair through this
+       :mod:`pneo._classifier` never funnels the component pair through this
        module — it calls ``neo.density(...)`` and ``other.density(...)``
        directly.  Closing that hole needs one call to this function in
        ``classifier.classify`` / ``classify_many``; it is recorded here rather
@@ -617,7 +617,7 @@ def rho_axis(
     """The rho quadrature nodes and their LINEAR cell widths.
 
     **This must stay identical to the rho half of**
-    :func:`pneo.ranging.build_grid`, and it is the *only* place the Rust
+    :func:`pneo._ranging.build_grid`, and it is the *only* place the Rust
     backend gets its rho axis from: the kernel no longer generates it.
 
     Why the axis crosses the boundary instead of being regenerated in Rust.
@@ -695,7 +695,7 @@ def sigma_point_count(att) -> int:
 
     Single source of truth for "does this tracklet carry sigma points", used by
     both backends.  The Python reference cannot marginalize over them [D-6], so
-    :func:`pneo.classifier.classify` raises rather than let one backend
+    :func:`pneo._classifier.classify` raises rather than let one backend
     honour them while the other silently scores the central value.
     """
     pts = getattr(att, "sigma_points", None)
@@ -763,11 +763,11 @@ def _result_from_core(
     """Assemble a :class:`ClassificationResult` from the kernel's output dict.
 
     Warning text, posterior conventions and the empty-region contract are taken
-    from :mod:`pneo.classifier` itself, so the two backends cannot drift
+    from :mod:`pneo._classifier` itself, so the two backends cannot drift
     apart on them.
     """
-    from .classifier import ClassificationResult, _posterior, _warn_status
-    from .ranging import RangingGrid
+    from ._classifier import ClassificationResult, _posterior, _warn_status
+    from ._ranging import RangingGrid
 
     n_nodes = int(out["n_nodes"])
     if n_nodes == 0:
@@ -873,7 +873,7 @@ def _result_from_core(
 
 
 # ---------------------------------------------------------------------------
-# Entry points used by pneo.classifier
+# Entry points used by pneo._classifier
 # ---------------------------------------------------------------------------
 
 

@@ -121,7 +121,7 @@ jobs:
 
           # The packaging invariants the wheel depends on.  Losing module-name
           # would silently publish the extension as a top-level `pneo_core`
-          # module that `pneo.backend` never looks for.
+          # module that `pneo._backend` never looks for.
           mat = pp.get("tool", {}).get("maturin", {})
           print(f"[tool.maturin]   module-name         {mat.get('module-name')}")
           print(f"[tool.maturin]   python-source       {mat.get('python-source')}")

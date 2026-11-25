@@ -2,7 +2,7 @@
 
 This module turns the two observation formats a digest2 user already has on
 disk — **ADES PSV** and **MPC 80-column** — into the
-:class:`~pneo.attributable.Attributable` values
+:class:`~pneo._attributable.Attributable` values
 :func:`pneo.classify` consumes.  It is the ingestion half of the
 ``pneo`` command-line tool (:mod:`pneo.cli`) and is a supported public
 API in its own right.
@@ -57,7 +57,7 @@ stated here so nobody has to discover them from a diff:
   astrometry is real, if less precise; the attributable fit's
   ``resid_rms_arcsec`` is the honest per-tracklet quality flag for them.
 5. **Observatory** (:class:`ObscodeTable`).  The built-in table
-   (:data:`pneo.attributable.MPC_OBSCODES`) first, then a *local* copy of
+   (:data:`pneo._attributable.MPC_OBSCODES`) first, then a *local* copy of
    the MPC "List Of Observatory Codes" page if one is configured or found, then
    a geocentric fallback with a warning.  **Nothing here touches the network**:
    an obscode lookup must not be able to stall or fail a scoring run.
@@ -78,7 +78,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .paths import default_obscodes_path
-from .attributable import (
+from ._attributable import (
     GEOCENTER_OBSCODES,
     MPC_EARTH_RADIUS_M,
     MPC_OBSCODES,
@@ -382,7 +382,7 @@ def obscode_geodetic(row: dict) -> tuple[float, float, float]:
     ``y = rho cos(phi') sin(lon)``, ``z = rho sin(phi')``.  Those define an
     ITRS position with no ellipsoid involved, so we build the position and let
     astropy invert it to geodetic — which is what
-    :func:`pneo.attributable.observatory_location` consumes for any code
+    :func:`pneo._attributable.observatory_location` consumes for any code
     outside its built-in table.  The round trip is exact to sub-millimetre;
     ``tests/test_ingest.py`` checks it against every entry of that built-in
     table.
@@ -409,10 +409,10 @@ class ObscodeTable:
 
     ``"geocenter"``
         the code denotes the geocentre (:data:`
-        pneo.attributable.GEOCENTER_OBSCODES`, i.e. ``"500"``) — no
+        pneo._attributable.GEOCENTER_OBSCODES`, i.e. ``"500"``) — no
         topocentric offset.
     ``"builtin"``
-        :data:`pneo.attributable.MPC_OBSCODES`, the package's own small
+        :data:`pneo._attributable.MPC_OBSCODES`, the package's own small
         table of parallax constants, converted by :func:`obscode_geodetic`.
         Preferred over any file so that a stale or truncated local copy cannot
         move a site pneo already knows.
@@ -529,7 +529,7 @@ class ObscodeTable:
             out = (0.0, 0.0, 0.0, "geocenter" if key else "fallback")
             if not key:
                 self._warn(
-                    "pneo.ingest: a tracklet carries no observatory code; "
+                    "pneo._ingest: a tracklet carries no observatory code; "
                     "scoring it at the geocentre. Check the 'stn' column "
                     "(ADES) or columns 78-80 (MPC 80-column).",
                     "",
@@ -567,7 +567,7 @@ class ObscodeTable:
 
     def _warn_fallback(self, code: str, why: str) -> None:
         self._warn(
-            f"pneo.ingest: observatory code {code!r} {why}. Pass "
+            f"pneo._ingest: observatory code {code!r} {why}. Pass "
             f"--obscodes PATH (or set {OBSCODE_ENV_VAR}) to a local copy of "
             "the MPC 'List Of Observatory Codes' page.",
             code,
@@ -649,7 +649,7 @@ class Tracklet:
 
         Keyed on :attr:`obscode_source`, **not** on the coordinates: a
         geocentric tracklet carries ``lon_deg = lat_deg = height_m = 0``, and
-        feeding those to :func:`pneo.attributable.observer_state` as a
+        feeding those to :func:`pneo._attributable.observer_state` as a
         *geodetic site* would place the observer on the equator at Greenwich —
         one Earth radius (4.3e-5 AU) from where it belongs.
         """
@@ -680,7 +680,7 @@ class Tracklet:
         )[:23]
 
     def attributable(self) -> Attributable:
-        """This tracklet as an :class:`~pneo.attributable.Attributable`."""
+        """This tracklet as an :class:`~pneo._attributable.Attributable`."""
         from astropy.time import Time
 
         return Attributable(
@@ -1150,7 +1150,7 @@ def parse_mpc80(
         )
     if n_blank_band:
         warnings.warn(
-            f"pneo.ingest: {path}: {n_blank_band} MPC 80-column record(s) "
+            f"pneo._ingest: {path}: {n_blank_band} MPC 80-column record(s) "
             "carry a magnitude with a BLANK band; pneo converts these as V "
             "(offset 0.0), whereas digest2's own 80-column reader applies its "
             "-0.8 unknown-band fallback, so pneo's V is 0.80 mag fainter "

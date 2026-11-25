@@ -10,7 +10,7 @@ def test_imports():
 
 
 def test_constants():
-    from pneo import constants
+    from pneo import _constants as constants
 
     assert abs(constants.MU_SUN - constants.K_GAUSS**2) < 1e-18
     assert constants.Q_NEO == 1.3

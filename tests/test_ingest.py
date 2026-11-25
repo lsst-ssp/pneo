@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`pneo.ingest` — observation files -> tracklets.
+"""Unit tests for :mod:`pneo._ingest` — observation files -> tracklets.
 
 Entirely offline and fast.  Three groups carry most of the weight:
 
@@ -32,14 +32,14 @@ if REPO_ROOT not in sys.path:
 
 from astropy.time import Time  # noqa: E402
 
-from pneo import ingest as G  # noqa: E402
-from pneo import transforms as T  # noqa: E402
-from pneo.attributable import (  # noqa: E402
+from pneo import _ingest as G  # noqa: E402
+from pneo import _transforms as T  # noqa: E402
+from pneo._attributable import (  # noqa: E402
     MPC_OBSCODES,
     observatory_location,
     observer_state,
 )
-from pneo.constants import K_GAUSS  # noqa: E402
+from pneo._constants import K_GAUSS  # noqa: E402
 
 ARCSEC = 206264.80624709636
 

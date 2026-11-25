@@ -37,7 +37,7 @@ import sys
 
 # The rust-mode A/B below has to be a real A/B: `PNEO_BACKEND` names a
 # *concrete* backend and overrides the `backend=` argument (see
-# pneo.backend), so a `PNEO_BACKEND=rust` inherited from the job
+# pneo._backend), so a `PNEO_BACKEND=rust` inherited from the job
 # environment would route the "python" call through the kernel as well and the
 # comparison would be vacuous.  Drop it here -- the workflow sets it for the
 # pytest subset, which is where it belongs.  tests/test_backend_parity.py does
@@ -49,7 +49,7 @@ from astropy.time import Time  # noqa: E402
 
 import pneo  # noqa: E402
 from pneo import Attributable, classify  # noqa: E402
-from pneo.backend import core_available, resolve_backend  # noqa: E402
+from pneo._backend import core_available, resolve_backend  # noqa: E402
 from pneo.models.digest2 import Digest2Component  # noqa: E402
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "rust"

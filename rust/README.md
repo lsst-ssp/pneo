@@ -4,7 +4,7 @@ The fused classify kernel behind `backend="rust"`. It implements the WP5
 marginal-likelihood integral (DESIGN §2.3–2.5) as a single pass over the
 quadrature nodes, crossing the Python↔Rust boundary **once per tracklet or
 once per batch** — never per function. The numpy pipeline in
-`pneo.classifier` stays the reference implementation; the two are
+`pneo._classifier` stays the reference implementation; the two are
 cross-validated in `tests/test_backend_parity.py` and
 `validation/backend_parity.py`.
 
@@ -45,7 +45,7 @@ Dependencies are exactly the three the design allows: `pyo3`, `numpy`
 
 | file | contents |
 | --- | --- |
-| `src/consts.rs` | copies of `pneo.constants` / `transforms` constants (`K_GAUSS`, obliquity, H,G coefficients, `_COND_MAX`) |
+| `src/consts.rs` | copies of `pneo._constants` / `transforms` constants (`K_GAUSS`, obliquity, H,G coefficients, `_COND_MAX`) |
 | `src/model.rs` | `Histogram`: the flattened `(q, e, i, H)` density table and the bin lookup, bit-identical to `population._bin_index` / `Digest2Component.density` including the D-14 clamp |
 | `src/kernel.rs` | the fused node loop: geometry → elements → photometry → density → Jacobian → accumulation; ρ̇ node generation; grid validation |
 | `src/guard.rs` | exact port of WP2's conditioning guard, plus the reachable-manifold prefilter that decides when to run it |
@@ -155,7 +155,7 @@ treated as hostile:
 * every large allocation uses `try_reserve`, so exhaustion raises
   `MemoryError` rather than aborting.
 * model-adaptation failures raise `UnsupportedModel` (a `ValueError` subclass),
-  which `pneo.backend` maps onto `ModelNotSupported` so that
+  which `pneo._backend` maps onto `ModelNotSupported` so that
   `backend="auto"` falls back to the reference instead of failing where the
   reference succeeds. An explicit `backend="rust"` still raises.
 
@@ -180,7 +180,7 @@ treated as hostile:
   depend on the machine, the numpy build and the libm — not just the numpy
   version. Measured on one host: equally legitimate formulations of the same
   quantity (`exp(y ln 10)`, `exp2(y log2 10)`) differ from `np.power(10, y)` by
-  up to **7 ulp on 881 of 1200 nodes**. So `pneo.backend.rho_axis` computes
+  up to **7 ulp on 881 of 1200 nodes**. So `pneo._backend.rho_axis` computes
   the 1200-element axis with the same `np.geomspace` call `build_grid` makes and
   hands the two small arrays (18.8 kB) over; ρ-grid parity is then exact **by
   construction** on every platform. Cost: 0.24 µs/call cached (106 µs
@@ -205,7 +205,7 @@ treated as hostile:
 ## Python surface
 
 ```python
-from pneo.classifier import classify, classify_many
+from pneo._classifier import classify, classify_many
 
 res = classify(att, neo, other, R, V, backend="rust")            # or "auto"/"python"
 res = classify(att, neo, other, R, V, backend="rust", diagnostics=False)
@@ -299,14 +299,14 @@ which are kept in the archived repository lsst-ssp/pneo-full.
 `n_nodes - n_masked_nonfinite` nodes with finite elements and finite implied H,
 how many lie at or above the pair's H support end (`+inf` for a D-14 clamped
 pair, `h_extend_to` under D-19, else 25.5). It exists so that
-`pneo.classifier._posterior` can tell *why* a 0/0 outcome happened without
+`pneo._classifier._posterior` can tell *why* a 0/0 outcome happened without
 the per-node arrays, i.e. in `diagnostics=False` mode. Zero density over a
 non-empty region has several causes and only the faint-end one licenses the
 D-19 triage score; see `_fully_truncated_in_H`.
 
-`pneo.backend` turns the dict into a `ClassificationResult`, which since
+`pneo._backend` turns the dict into a `ClassificationResult`, which since
 D-19 also carries `status` (`"ok"`, `"fully_truncated_flagged"`,
 `"empty_region"`, `"both_zero"`, `"overflow"`, `"nan"`) and the derived
 `policy_assigned` flag. Both are produced by the shared post-processing in
-`pneo.classifier`, so they are identical between the backends by
+`pneo._classifier`, so they are identical between the backends by
 construction, and `validation/backend_parity.py` compares them.

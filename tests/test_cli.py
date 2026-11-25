@@ -38,10 +38,10 @@ import astropy.units as u  # noqa: E402
 from astropy.time import Time  # noqa: E402
 
 from pneo import __version__, cli  # noqa: E402
-from pneo import transforms as T  # noqa: E402
-from pneo.attributable import observer_state  # noqa: E402
-from pneo.backend import core_available  # noqa: E402
-from pneo.ingest import BAND_TO_V  # noqa: E402
+from pneo import _transforms as T  # noqa: E402
+from pneo._attributable import observer_state  # noqa: E402
+from pneo._backend import core_available  # noqa: E402
+from pneo._ingest import BAND_TO_V  # noqa: E402
 
 from model_location import MODEL_PATH  # noqa: E402
 EPOCH = "2026-03-15T06:00:00"
@@ -314,7 +314,7 @@ def test_output_columns_are_a_subset_of_the_json_schema():
 
 def test_every_status_the_tool_can_print_is_documented_in_help():
     """No drift between the status vocabulary and what --help explains."""
-    from pneo.ingest import IngestFailure
+    from pneo._ingest import IngestFailure
 
     documented = cli._EPILOG
     for status in cli.CLASSIFIER_STATUSES:
@@ -613,13 +613,13 @@ def test_summary_reports_the_backend_actually_used(capsys, obsfile,
     if not core_available():
         pytest.skip("pneo._core not built")
 
-    from pneo.backend import ModelNotSupported
+    from pneo._backend import ModelNotSupported
 
     def refuse(neo, other):
         raise ModelNotSupported("pretend the kernel cannot represent this")
 
     monkeypatch.setattr(cli, "core_model_for", refuse, raising=False)
-    import pneo.backend as B
+    import pneo._backend as B
 
     monkeypatch.setattr(B, "core_model_for", refuse)
     _out, err = _score(capsys, obsfile, "--backend", "rust", "--workers", "2",
@@ -822,7 +822,7 @@ def test_help_is_self_sufficient_for_a_digest2_user(capsys):
 
 
 def _bare_tracklet(i, v_mag):
-    from pneo.ingest import Tracklet
+    from pneo._ingest import Tracklet
 
     return Tracklet(
         object_id=f"T{i}", obscode="X05", n_obs=3, arc_hours=0.5,
@@ -946,7 +946,7 @@ def test_fetch_obscodes_writes_nothing_when_the_payload_is_not_the_table(
     monkeypatch, tmp_path
 ):
     """A captive portal must not be able to replace a good local table."""
-    from pneo import ingest as ing
+    from pneo import _ingest as ing
 
     class _Resp:
         def read(self):
@@ -971,7 +971,7 @@ def test_fetch_obscodes_writes_nothing_when_the_payload_is_not_the_table(
 
 def test_fetch_model_subcommand_wraps_the_existing_script(monkeypatch):
     """`pneo fetch-model` must be the same code as `pneo-fetch-model`."""
-    from pneo import fetch_model
+    from pneo import _fetch_model as fetch_model
 
     seen = {}
 
@@ -1007,6 +1007,6 @@ def test_console_script_is_declared_in_pyproject():
     """The `pneo` entry point must be wired, or none of this is reachable."""
     text = open(os.path.join(REPO_ROOT, "pyproject.toml")).read()
     assert 'pneo = "pneo.cli:main"' in text
-    assert 'pneo-fetch-model = "pneo.fetch_model:main"' in text, (
+    assert 'pneo-fetch-model = "pneo._fetch_model:main"' in text, (
         "the pre-existing script must keep working"
     )

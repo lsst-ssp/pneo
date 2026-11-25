@@ -1116,7 +1116,7 @@ class Digest2Component(PopulationComponent):
         ``h_extend_to`` [D-19] is passed to both components too, and for a
         third instance of the same reason: extending only the NEO side would
         add the entire faint-end continuation to the numerator of P(NEO) and
-        nothing to the denominator.  :func:`pneo.backend.check_component_pair`
+        nothing to the denominator.  :func:`pneo._backend.check_component_pair`
         enforces the pairing at every classify entry point.
 
         Implementation note: digest2's named classes overlap and do not cover
@@ -1577,7 +1577,7 @@ class Digest2Component(PopulationComponent):
         ``dq de di (2 pi)^3``.  Exposed so the Rust backend can copy the same
         numbers and evaluate the same expression — the two backends are
         bit-identical because they share the coefficients, not because they
-        each re-derive them (see ``pneo.backend``).  Read-only.
+        each re-derive them (see ``pneo._backend``).  Read-only.
         """
         return self._h_coeffs
 

@@ -36,11 +36,11 @@ import numpy as np
 import pytest
 from astropy.time import Time
 
-from pneo import transforms as T
-from pneo.attributable import Attributable
-from pneo.backend import core_available, resolve_backend
-from pneo.classifier import classify
-from pneo.constants import MU_SUN
+from pneo import _transforms as T
+from pneo._attributable import Attributable
+from pneo._backend import core_available, resolve_backend
+from pneo._classifier import classify
+from pneo._constants import MU_SUN
 from pneo.models.digest2 import (
     E_EDGES,
     H_EDGES,
@@ -48,7 +48,7 @@ from pneo.models.digest2 import (
     Q_EDGES,
     Digest2Component,
 )
-from pneo.ranging import admissible_rhodot_interval
+from pneo._ranging import admissible_rhodot_interval
 
 pytestmark = pytest.mark.skipif(
     not core_available(),
@@ -195,7 +195,7 @@ def test_density_lookup_is_bit_exact(core, clamp):
     other = Digest2Component(
         counts[::-1].copy(), "other", h_top_bin_infinite=clamp
     )
-    from pneo.backend import core_model_for
+    from pneo._backend import core_model_for
 
     cm = core_model_for(neo, other)
 
@@ -244,7 +244,7 @@ def test_admissible_interval_convention_on_empty_rows(d2pair, core):
     V = np.array([0.0155, 0.0062, 0.0027])
     att = Attributable(ra=1.0, dec=0.2, ra_rate=0.6, dec_rate=0.2,
                        epoch=epoch, v_mag=20.0)
-    from pneo.backend import rho_axis
+    from pneo._backend import rho_axis
 
     rho_nodes, _ = rho_axis(0.01, 100.0, FAST["n_rho"])
     lo, hi = admissible_rhodot_interval(att, R, V, rho_nodes)
@@ -493,14 +493,14 @@ def test_end_to_end_parity_on_corner_geometries(d2pair):
 
 
 def test_core_model_is_cached(d2pair):
-    from pneo.backend import core_model_for
+    from pneo._backend import core_model_for
 
     neo, other = d2pair
     assert core_model_for(neo, other) is core_model_for(neo, other)
 
 
 def test_core_model_rejects_mismatched_edges(d2pair):
-    from pneo.backend import ModelNotSupported, core_model_for
+    from pneo._backend import ModelNotSupported, core_model_for
 
     neo, other = d2pair
 
@@ -533,7 +533,7 @@ def test_core_model_rejects_overflowing_and_invalid_bin_structures(core):
     length check and then be indexed ~2**64 elements out of bounds — a
     reproducible SIGSEGV from pure Python through the public `CoreModel`.
     """
-    from pneo.backend import ModelNotSupported, core_model_for
+    from pneo._backend import ModelNotSupported, core_model_for
 
     big = 65536
     edges = [np.arange(big + 1, dtype=float) for _ in range(4)]
@@ -604,7 +604,7 @@ def test_density_lookup_is_bounds_checked(core):
 
 def test_env_auto_does_not_override_an_explicit_argument(monkeypatch, d2pair):
     """Review finding 8: env `auto` means "no preference", not "override"."""
-    from pneo.backend import requested_backend
+    from pneo._backend import requested_backend
 
     for value in ("auto", "  AUTO  ", "Auto"):
         monkeypatch.setenv("PNEO_BACKEND", value)
@@ -810,7 +810,7 @@ def test_pchip_density_lookup_is_bit_exact(core, pchip_pair):
     exercised at 0 and at one ulp below the interval width), plus +/-inf, NaN
     and the out-of-support tails.
     """
-    from pneo.backend import core_model_for
+    from pneo._backend import core_model_for
 
     neo, other = pchip_pair
     cm = core_model_for(neo, other)
@@ -871,7 +871,7 @@ def test_model_cache_distinguishes_the_h_interpolation_mode(d2pair, pchip_pair):
     the mode would hand back the piecewise-constant handle and silently score
     a different model — the same failure the D-14 clamp flag once had.
     """
-    from pneo.backend import _fingerprint, core_model_for
+    from pneo._backend import _fingerprint, core_model_for
 
     hist_neo, hist_other = d2pair
     sm_neo, sm_other = pchip_pair
@@ -896,7 +896,7 @@ def test_declared_h_interpolation_without_coefficients_is_refused(pchip_pair):
     also fail loudly on such an object) and an explicit `backend="rust"`
     raises.  It must never be scored as if it were piecewise constant.
     """
-    from pneo.backend import ModelNotSupported, core_model_for
+    from pneo._backend import ModelNotSupported, core_model_for
 
     class Liar:
         def __init__(self, src):
@@ -998,7 +998,7 @@ def test_mixed_mode_guard_does_not_fire_on_matched_or_unaware_components(
     stand in for both flags; and differing `label`/`variant`/`parameterization`
     are NOT the guard's business.
     """
-    from pneo.backend import check_component_pair
+    from pneo._backend import check_component_pair
 
     class Minimal:
         parameterization = "aei"
@@ -1016,7 +1016,7 @@ def test_mixed_mode_guard_does_not_fire_on_matched_or_unaware_components(
 # D-19 — the finite H extension across the backend boundary
 #
 # The kernel needed NO change for this mode: the H axis length and the H edge
-# array are data-driven (`rust/src/model.rs` header), and `pneo.backend`
+# array are data-driven (`rust/src/model.rs` header), and `pneo._backend`
 # hands over the already-extended table / edges / coefficients.  These tests
 # are what turns "no change needed" from an assertion into a measurement — the
 # lookup is asserted bit-equal, the end-to-end Lambdas are asserted at the
@@ -1088,7 +1088,7 @@ def test_extended_density_lookup_is_bit_exact(core, ext_pair, ext_pchip_pair,
     is exercised at, one ulp below and one ulp above), plus +/-inf, NaN, and
     both out-of-support tails.
     """
-    from pneo.backend import core_model_for
+    from pneo._backend import core_model_for
 
     pair = ext_pair if which == "hist" else ext_pchip_pair
     neo, other = pair
@@ -1121,7 +1121,7 @@ def test_two_reaches_do_not_share_a_cached_core_model(core, ext_pair):
     Without `h_extend_to` in the key the second pair would silently reuse the
     first pair's CoreModel and score every H in [30, 40) as out of support.
     """
-    from pneo.backend import _fingerprint, core_model_for
+    from pneo._backend import _fingerprint, core_model_for
 
     neo30, other30 = ext_pair
     neo40, other40 = Digest2Component.neo_other_pair(MODEL_PATH,

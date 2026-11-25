@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .constants import G_SLOPE_DEFAULT, MU_SUN, OBLIQUITY_J2000
+from ._constants import G_SLOPE_DEFAULT, MU_SUN, OBLIQUITY_J2000
 
 __all__ = [
     "unit_vector",

@@ -293,7 +293,7 @@ mod tests {
     }
 
     /// D-19: an H axis carrying the synthetic extension bin needs no special
-    /// case here.  Built exactly as `pneo.backend` hands it over — one more
+    /// case here.  Built exactly as `pneo._backend` hands it over — one more
     /// edge, one more table entry per cell, the extension entry a bit-for-bit
     /// copy of the top bin's density — and checked for the three properties the
     /// Python side guarantees: exact continuity at the old support end, a flat

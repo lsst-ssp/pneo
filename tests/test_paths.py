@@ -39,7 +39,7 @@ def test_resolved_at_call_time_not_import_time(monkeypatch, tmp_path):
 
 def test_fetch_model_defaults_to_the_cache(monkeypatch, tmp_path):
     """`pneo-fetch-model` with no --out writes into the cache (network stubbed)."""
-    from pneo import fetch_model
+    from pneo import _fetch_model as fetch_model
 
     payload = (fetch_model.EXPECTED_HEADER + "\n").encode()
 

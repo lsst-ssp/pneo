@@ -40,8 +40,8 @@ import math
 import numpy as np
 import pytest
 
-from pneo import transforms as T
-from pneo.constants import G_SLOPE_DEFAULT, MU_SUN, OBLIQUITY_J2000
+from pneo import _transforms as T
+from pneo._constants import G_SLOPE_DEFAULT, MU_SUN, OBLIQUITY_J2000
 
 SEED = 20260831
 

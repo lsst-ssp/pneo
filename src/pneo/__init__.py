@@ -1,9 +1,9 @@
 """pneo — Bayesian NEO tracklet classification by systematic ranging."""
 
-from .attributable import Attributable, observer_state
-from .classifier import ClassificationResult, classify, classify_many
+from ._attributable import Attributable, observer_state
+from ._classifier import ClassificationResult, classify, classify_many
 from .models.digest2 import Digest2Component, PopulationComponent
-from .ranging import RangingGrid, admissible_rhodot_interval, build_grid
+from ._ranging import RangingGrid, admissible_rhodot_interval, build_grid
 
 __all__ = [
     "Attributable",

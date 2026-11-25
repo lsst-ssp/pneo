@@ -3,7 +3,7 @@ name: CI
 # Two things are tested, in parallel jobs:
 #
 #   * `pytest` on the stock install -- no Rust extension present, so
-#     `pneo.classifier` runs its numpy reference implementation.  This is
+#     `pneo._classifier` runs its numpy reference implementation.  This is
 #     what `pip install pneo` gives a user, and it is the configuration in
 #     which `backend="auto"` must degrade to "python" rather than fail.
 #   * `cargo test` plus `pytest` with the extension built, where
@@ -81,8 +81,8 @@ jobs:
         run: |
           python - <<'PY'
           import sys, numpy, astropy, matplotlib
-          from pneo.attributable import ephemeris_in_use
-          from pneo.backend import core_available, resolve_backend
+          from pneo._attributable import ephemeris_in_use
+          from pneo._backend import core_available, resolve_backend
           print(sys.version)
           for m in (numpy, astropy, matplotlib):
               print(f"{m.__name__:12s} {m.__version__}")
@@ -189,8 +189,8 @@ jobs:
           python - <<'PY'
           import sys, numpy, astropy, matplotlib
           import pneo._core as core
-          from pneo.attributable import ephemeris_in_use
-          from pneo.backend import core_available, resolve_backend
+          from pneo._attributable import ephemeris_in_use
+          from pneo._backend import core_available, resolve_backend
           print(sys.version)
           for m in (numpy, astropy, matplotlib):
               print(f"{m.__name__:12s} {m.__version__}")

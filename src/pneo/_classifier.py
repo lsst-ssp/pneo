@@ -11,7 +11,7 @@ evaluating, for each population component C,
     Lambda_C(A, V) = int_AR n_C(Phi(A, rho, rho_dot), H(V, rho))
                             |det d(E)/d(A, rho, rho_dot)| d(rho) d(rho_dot)
 
-on the quadrature nodes produced by :func:`pneo.ranging.build_grid`
+on the quadrature nodes produced by :func:`pneo._ranging.build_grid`
 (DESIGN §2.3, §2.5), and then forming
 
     P(NEO) = Lambda_NEO / (Lambda_NEO + Lambda_other)          (DESIGN §2.4)
@@ -65,11 +65,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .attributable import Attributable, observer_state
-from .constants import G_SLOPE_DEFAULT
+from ._attributable import Attributable, observer_state
+from ._constants import G_SLOPE_DEFAULT
 from .models.digest2 import PopulationComponent
-from .ranging import RangingGrid, build_grid
-from .transforms import (
+from ._ranging import RangingGrid, build_grid
+from ._transforms import (
     absolute_magnitude,
     elements_from_state,
     phase_angle,
@@ -253,7 +253,7 @@ class ClassificationResult:
 
         ``h`` is **not** defaulted and is not 25.5 by assumption: pass the
         support end of the components you actually scored with —
-        ``pneo.classifier.h_support_end(neo, other)``, which is 25.5 for
+        ``pneo._classifier.h_support_end(neo, other)``, which is 25.5 for
         the D-4 digest2 pair, ``h_extend_to`` under D-19, and ``inf`` under the
         D-14 clamp (where this diagnostic is vacuous, since nothing is
         truncated above).
@@ -294,7 +294,7 @@ class ClassificationResult:
             actually scored, ``h_support_end(neo, other)``, not the literal
             25.5, which is only right for the unextended D-4 pair::
 
-                h_max = pneo.classifier.h_support_end(neo, other)
+                h_max = pneo._classifier.h_support_end(neo, other)
                 res.posterior_mass_where(
                     lambda r: (r.node_q > 1.3) & (r.node_H > h_max)
                 )
@@ -647,7 +647,7 @@ def _posterior(
 
     **This is the single shared post-processing step of both backends.**  The
     Python reference (:func:`classify`) and the Rust glue
-    (:func:`pneo.backend._result_from_core`) both call this function and
+    (:func:`pneo._backend._result_from_core`) both call this function and
     then :func:`_warn_status`; nothing about the posterior, the status
     vocabulary or the warnings is implemented per backend, so the two cannot
     drift apart on any of it by construction.
@@ -888,7 +888,7 @@ def classify(
     R_obs, V_obs : (3,) arrays, optional
         Observer heliocentric state, EQUATORIAL frame [AU, AU/day].  When
         omitted it is computed from ``att.epoch`` via
-        :func:`pneo.attributable.observer_state`, using the
+        :func:`pneo._attributable.observer_state`, using the
         ``obscode``/``lon_deg``/``lat_deg``/``height_m`` arguments below (the
         geocenter if none are given).
     rho_min, rho_max : float
@@ -905,13 +905,13 @@ def classify(
         uses ``constants.G_SLOPE_DEFAULT`` = 0.15 [D-5].
     obscode, lon_deg, lat_deg, height_m : optional
         Observatory, forwarded verbatim to
-        :func:`pneo.attributable.observer_state` when the observer state
+        :func:`pneo._attributable.observer_state` when the observer state
         is not supplied directly.  Ignored when both ``R_obs`` and ``V_obs``
         are given.
     backend : {"auto", "python", "rust"}
         Which implementation of the node loop to use.  ``"python"`` is the
         reference pipeline in this module; ``"rust"`` is the fused kernel in
-        the ``pneo._core`` extension (see :mod:`pneo.backend`), which
+        the ``pneo._core`` extension (see :mod:`pneo._backend`), which
         evaluates the composed Jacobian in closed form instead of building and
         inverting the 6x6 chain.  ``"auto"`` (the default) picks ``"rust"``
         when the extension is importable and falls back to ``"python"``
@@ -943,14 +943,14 @@ def classify(
     counters agree exactly: the Rust kernel reproduces WP2's conditioning guard
     itself rather than approximating it (``rust/src/guard.rs``).  The rho
     quadrature axis is computed once in Python by
-    :func:`pneo.backend.rho_axis` -- the same ``np.geomspace`` call
+    :func:`pneo._backend.rho_axis` -- the same ``np.geomspace`` call
     ``build_grid`` makes -- and handed to the kernel, so the two backends
     integrate over a bit-identical grid on every numpy build and CPU.  Measured on
     the stored gate_v0 catalogue (``validation/backend_parity.py``): max
     |dp_neo| ~ 2e-16, max Lambda relative error ~4e-13, identical
     ``n_masked_nonfinite`` and ``n_masked_det`` node counts.
     """
-    from .backend import (
+    from ._backend import (
         ModelNotSupported,
         check_component_pair,
         resolve_backend,
@@ -1008,7 +1008,7 @@ def classify(
         raise ValueError("R_obs and V_obs must be (3,) equatorial vectors")
 
     if _which == "rust":
-        from .backend import classify_rust, strict_rust
+        from ._backend import classify_rust, strict_rust
 
         try:
             return classify_rust(
@@ -1245,7 +1245,7 @@ def classify_many(
     (AUC) may legitimately include them — the policy is a claim about their
     rank, and it is the claim being tested.
     """
-    from .backend import (
+    from ._backend import (
         ModelNotSupported,
         check_component_pair,
         resolve_backend,
@@ -1256,7 +1256,7 @@ def classify_many(
 
     n_threads = kwargs.pop("n_threads", None)
     if resolve_backend(kwargs.get("backend", "auto")) == "rust" and atts:
-        from .backend import classify_many_rust
+        from ._backend import classify_many_rust
 
         try:
             return _classify_many_rust(

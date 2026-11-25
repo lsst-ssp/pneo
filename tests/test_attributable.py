@@ -59,7 +59,7 @@ import numpy as np
 import pytest
 from astropy.time import Time, TimeDelta
 
-from pneo.attributable import (
+from pneo._attributable import (
     MPC_OBSCODES,
     Attributable,
     ephemeris_in_use,

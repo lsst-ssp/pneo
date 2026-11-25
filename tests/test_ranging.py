@@ -2,7 +2,7 @@
 
 Everything here is checked against *independent* brute-force machinery: the
 energy condition is re-implemented from its definition (no reuse of the
-quadratic algebra in ``pneo.ranging``), and the reference integrals are
+quadratic algebra in ``pneo._ranging``), and the reference integrals are
 computed on uniform (rho, rho_dot) grids so that the log-spacing measure in
 ``build_grid`` is genuinely under test.
 
@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 from astropy.time import Time
 
-from pneo.attributable import Attributable
-from pneo.constants import MU_SUN
-from pneo.ranging import RangingGrid, admissible_rhodot_interval, build_grid
+from pneo._attributable import Attributable
+from pneo._constants import MU_SUN
+from pneo._ranging import RangingGrid, admissible_rhodot_interval, build_grid
 
 EPOCH = Time(60000.0, format="mjd", scale="tdb")
 

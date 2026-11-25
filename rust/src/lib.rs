@@ -4,7 +4,7 @@
 //! batch), never per function: [`CoreModel`] is built once per process and
 //! [`classify_core`] / [`classify_batch`] run the whole
 //! grid → elements → photometry → density → Jacobian → accumulate pipeline
-//! inside Rust.  The Python implementation in `pneo.classifier` remains the
+//! inside Rust.  The Python implementation in `pneo._classifier` remains the
 //! reference backend; see `tests/test_backend_parity.py`.
 //!
 //! This is a public extension module, so everything crossing the boundary is
@@ -34,7 +34,7 @@ pyo3::create_exception!(
     PyValueError,
     "The population components cannot be handed to the Rust kernel.\n\n\
      Subclasses ValueError, so existing handlers keep working; \
-     `pneo.backend` maps it onto `ModelNotSupported` so that \
+     `pneo._backend` maps it onto `ModelNotSupported` so that \
      `backend=\"auto\"` falls back to the Python reference instead of failing \
      where the reference would succeed."
 );
@@ -162,7 +162,7 @@ fn hist_from_py(
 /// bin-edge arrays.  Rust owns a *copy* of everything, so the numpy arrays
 /// handed in may be freed or mutated afterwards without affecting the model.
 ///
-/// That independence is also a hazard, and it is `pneo.backend`'s job to
+/// That independence is also a hazard, and it is `pneo._backend`'s job to
 /// manage: because the copy is frozen at construction, mutating the Python
 /// component afterwards (flipping `h_top_bin_infinite`, editing a cell) leaves
 /// this handle stale.  The glue therefore keys its handle cache on a content
