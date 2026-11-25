@@ -97,7 +97,7 @@ def main() -> int:
     py = [m for m in members if m.startswith("pneo/") and m.endswith(".py")]
     if "pneo/__init__.py" not in py:
         fail("pneo/__init__.py is missing: the wheel carries no Python package")
-    for required in ("backend.py", "classifier.py", "population.py"):
+    for required in ("_backend.py", "_classifier.py", "_api.py", "models/digest2.py"):
         if f"pneo/{required}" not in py:
             fail(f"pneo/{required} is missing from the wheel")
 

@@ -1,14 +1,14 @@
 name: digest2 population model
 description: >
   Put the population model in pneo's per-user cache: restore it from the
-  Actions cache keyed on the sha256 pinned in src/pneo/fetch_model.py, or
+  Actions cache keyed on the sha256 pinned in src/pneo/_fetch_model.py, or
   download it with pneo fetch, then verify what we ended up with.
   Exports PNEO_CACHE_DIR for the rest of the job, so the tests and the CLI find
   the model there.  Requires pneo to be installed first.
 
 outputs:
   sha256-pinned:
-    description: The sha256 pinned in src/pneo/fetch_model.py.
+    description: The sha256 pinned in src/pneo/_fetch_model.py.
     value: ${{ steps.pin.outputs.sha256 }}
   sha256-actual:
     description: The sha256 of the file that is now in the cache.
@@ -37,9 +37,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sha="$(grep -oE '[0-9a-f]{64}' src/pneo/fetch_model.py | head -n1)"
+        sha="$(grep -oE '[0-9a-f]{64}' src/pneo/_fetch_model.py | head -n1)"
         if [ -z "$sha" ]; then
-          echo "::error file=src/pneo/fetch_model.py::no pinned sha256 found"
+          echo "::error file=src/pneo/_fetch_model.py::no pinned sha256 found"
           exit 1
         fi
         echo "sha256=$sha" >> "$GITHUB_OUTPUT"
@@ -75,7 +75,7 @@ runs:
           echo "$f: $(wc -c <"$f") bytes, sha256 $sha (matches the pin)"
         else
           echo "matches=false" >> "$GITHUB_OUTPUT"
-          echo "::warning file=src/pneo/fetch_model.py::digest2 model sha256 is $sha but KNOWN_SHA256 pins ${{ steps.pin.outputs.sha256 }} - the MPC probably refreshed the model; the format check still passed. Update the pin (and expect population-model test numbers to move)."
+          echo "::warning file=src/pneo/_fetch_model.py::digest2 model sha256 is $sha but KNOWN_SHA256 pins ${{ steps.pin.outputs.sha256 }} - the MPC probably refreshed the model; the format check still passed. Update the pin (and expect population-model test numbers to move)."
         fi
 
     # Only cache a file that matches the pin, so the key never names content it
